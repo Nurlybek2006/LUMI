@@ -1,0 +1,21 @@
+export const kk = {
+  appName: 'LUMI',
+  tagline: 'Жеке әлемің',
+  library: 'Кітап сөресі',
+  journal: 'Күнделік',
+  planner: 'Жоспар',
+  vocabulary: 'Сөздік',
+  calendar: 'Күнтізбе',
+  settings: 'Баптаулар',
+  today: 'Бүгін',
+  tomorrow: 'Ертең',
+  add: 'Қосу',
+  save: 'Сақтау',
+  search: 'Іздеу',
+  empty: 'Әзірге бос. Жаңа парақ ашыңыз.',
+  offline: 'Барлық жазбаңыз осы құрылғыда сақталады',
+  privacy: 'Жеке. Жергілікті. Тек сізге.',
+  entries: 'жазба',
+  words: 'сөз',
+  tasks: 'тапсырма'
+} as const;

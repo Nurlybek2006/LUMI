@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "LUMI — Жеке әлемің",
+    "slug": "lumi-personal-universe",
+    "scheme": "lumi",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "android": { "softwareKeyboardLayoutMode": "resize", "package": "app.lumi.journal", "allowBackup": false },
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      ["expo-sqlite", { "useSQLCipher": false }],
+      ["expo-secure-store", { "configureAndroidBackup": true }],
+      ["expo-image-picker", { "photosPermission": "LUMI суреттерді күнделікке қосу үшін қол жеткізуді сұрайды." }],
+      ["expo-notifications", { "enableRemoteNotifications": false }]
+    ],
+    "ios": { "bundleIdentifier": "app.lumi.journal", "supportsTablet": true },
+    "experiments": { "typedRoutes": true }
+  }
+}

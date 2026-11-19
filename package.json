@@ -1,0 +1,51 @@
+{
+  "name": "lumi",
+  "version": "1.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --experimental-default-type=module -e \"await Promise.all([import('./tests/core.test.ts'), import('./tests/database.test.ts'), import('./tests/autosave.test.ts')])\"",
+    "lint": "eslint app src tests app.config.js eslint.config.js --max-warnings 0"
+  },
+  "dependencies": {
+    "base64-js": "^1.5.1",
+    "expo": "~58.0.0",
+    "expo-crypto": "~58.0.0",
+    "expo-dev-client": "~58.0.0",
+    "expo-document-picker": "~58.0.0",
+    "expo-file-system": "~58.0.14",
+    "expo-image-picker": "~58.0.0",
+    "expo-local-authentication": "~58.0.0",
+    "expo-notifications": "~58.1.9",
+    "expo-router": "~58.0.32",
+    "expo-screen-capture": "~58.0.0",
+    "expo-secure-store": "~58.0.3",
+    "expo-sharing": "~58.0.0",
+    "expo-sqlite": "~58.0.18",
+    "expo-status-bar": "~58.0.5",
+    "fflate": "^0.8.2",
+    "lucide-react-native": "^1.76.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-gesture-handler": "~3.3.0",
+    "react-native-reanimated": "4.7.1",
+    "react-native-safe-area-context": "~5.11.1",
+    "react-native-screens": "~4.30.1",
+    "react-native-svg": "15.16.0",
+    "react-native-worklets": "0.13.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "~19.3.0",
+    "babel-preset-expo": "~58.0.26",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~58.0.4",
+    "typescript": "~6.0.3"
+  }
+}
