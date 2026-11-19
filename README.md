@@ -51,9 +51,25 @@ npx eas-cli build --platform android --profile preview
 
 The `preview` profile produces an internal APK and sets `APP_VARIANT=offline`, so its manifest excludes network permissions. The `production` EAS profile also defaults to the offline variant; use `preview` when you specifically need an installable APK.
 
+## Build and install an offline APK
+
+From PowerShell with Android SDK tools and JDK installed, build a local release APK and install it on a connected device or emulator:
+
+```powershell
+$env:APP_VARIANT = 'offline'
+npx expo prebuild --platform android --no-install --no-clean
+.\android\gradlew.bat -p android :app:assembleRelease
+adb install -r .\android\app\build\outputs\apk\release\app-release.apk
+```
+
+The prebuilt `LUMI-offline.apk` in the project root can be installed with `adb install -r .\LUMI-offline.apk`. To manually check offline behavior, enable Airplane mode, open LUMI, create a notebook and entry, add a planner task and vocabulary card, close and reopen the app, then export and restore a `.lumibackup`.
+
+The included APK uses the local debug signing key for sideloading. Configure your own release keystore before Play Store distribution.
+
 ## Checks
 
 ```sh
+npm run lint
 npm run typecheck
 npm test
 ```
