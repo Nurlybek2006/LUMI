@@ -4,12 +4,12 @@ import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { BookHeart, BookOpen, BookOpenCheck, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Code2, Flame, Languages, Lightbulb, Plus, Search, Sunrise, X } from 'lucide-react-native';
 import { AppScreen, Card, PrimaryButton, SectionTitle, TextField, colors } from '@/components/ui';
-import { getStats, listEntries, listNotebooks, listTasks, listWords, createNotebook, deleteNotebook, reorderNotebook, updateNotebook } from '@/database/repository';
+import { getStats, listEntries, listNotebookPages, listNotebooks, listTasks, listWords, createNotebook, deleteNotebook, reorderNotebook, updateNotebook } from '@/database/repository';
 import { getTheme, themeIds, themes } from '@/themes/registry';
 import { localDate, addLocalDays } from '@/utils/core';
 import { readSetting } from '@/database/settings';
 import { pruneUnusedMedia } from '@/services/media';
-import type { Notebook, ThemeId } from '@/types/models';
+import type { Notebook, NotebookType, ThemeId } from '@/types/models';
 
 export default function LibraryScreen() {
   const db = useSQLiteContext();
@@ -22,17 +22,26 @@ export default function LibraryScreen() {
   const [target, setTarget] = useState<Notebook | null>(null);
   const [title, setTitle] = useState('');
   const [theme, setTheme] = useState<ThemeId>('warm');
+  const [notebookType, setNotebookType] = useState<NotebookType>('general');
 
   const refresh = useCallback(async () => {
     const [books, counts, tasks, entries, words] = await Promise.all([listNotebooks(db), getStats(db), listTasks(db, addLocalDays(localDate(), 1)), listEntries(db), listWords(db)]);
     const progress: Record<string, number> = {};
     for (const entry of entries) progress[entry.notebookId] = (progress[entry.notebookId] ?? 0) + 1;
+    const countsByBook = await Promise.all(books.map(async (book) => ({
+      id: book.id,
+      count: book.type === 'general' ? (await listNotebookPages(db, book.id)).length
+        : book.type === 'vocabulary' ? (await listWords(db, '', 'due', book.id)).length
+          : book.type === 'planner' ? (await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM tasks WHERE notebook_id=?', book.id))?.count ?? 0
+            : progress[book.id] ?? 0
+    })));
+    for (const item of countsByBook) progress[item.id] = item.count;
     setNotebooks(books); setStats(counts); setTomorrowTasks(tasks.slice(0, 3));
     setPagesByNotebook(progress); setDueWords(words.filter((word) => !word.learned && word.nextReview <= localDate()).length);
   }, [db]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
 
-  const openCreate = () => { setTitle(''); void readSetting(db, 'default_theme').then((value) => setTheme((value as ThemeId) || 'warm')); setModal('create'); };
+  const openCreate = () => { setTitle(''); setNotebookType('general'); void readSetting(db, 'default_theme').then((value) => setTheme((value as ThemeId) || 'warm')); setModal('create'); };
   const bookIcons: Record<string, typeof BookOpen> = { 'book-heart': BookHeart, 'calendar-days': CalendarDays, languages: Languages, lightbulb: Lightbulb, 'code-2': Code2 };
   const openManage = (book: Notebook) => Alert.alert(book.title, 'Дәптерді өзгерту', [
     { text: 'Атын өзгерту', onPress: () => { setTarget(book); setTitle(book.title); setModal('rename'); } },
@@ -41,7 +50,7 @@ export default function LibraryScreen() {
     { text: 'Жабу', style: 'cancel' }
   ]);
   const saveModal = async () => {
-    if (modal === 'create') { if (!title.trim()) return; const id = await createNotebook(db, title, theme); setModal(null); await refresh(); router.push({ pathname: '/notebook/[id]', params: { id } }); }
+    if (modal === 'create') { if (!title.trim()) return; const id = await createNotebook(db, title, theme, notebookType); setModal(null); await refresh(); router.push({ pathname: '/notebook/[id]', params: { id } }); }
     if (modal === 'rename' && target) { if (!title.trim()) return; await updateNotebook(db, target.id, { title }); setModal(null); await refresh(); }
     if (modal === 'theme' && target) { await updateNotebook(db, target.id, { themeId: theme }); setModal(null); await refresh(); }
   };
@@ -64,7 +73,7 @@ export default function LibraryScreen() {
       {!notebooks.length ? <TouchableOpacity onPress={openCreate} style={styles.emptyShelf}><BookOpen size={25} color={colors.accent} /><Text style={styles.emptyShelfTitle}>Сөреңіз әзірге бос</Text><Text style={styles.emptyShelfText}>Алғашқы дәптеріңізді жасаңыз</Text></TouchableOpacity> : null}
       {notebooks.map((book, index) => { const t = getTheme(book.themeId); const Icon = bookIcons[book.icon] ?? BookOpen; return <View key={book.id} style={styles.bookWrap}>
         <TouchableOpacity onPress={() => router.push({ pathname: '/notebook/[id]', params: { id: book.id } })} onLongPress={() => openManage(book)} accessibilityRole="button" accessibilityLabel={`${book.title}, ${t.name}`}>
-          <View style={[styles.book, { backgroundColor: t.cover }]}><View style={styles.bookSpine} /><Text style={styles.bookOrnament}>{t.ornament}</Text><Icon size={23} color="#F3DEB5" strokeWidth={1.4} /><Text style={styles.bookTitle}>{book.title}</Text><Text style={styles.bookSubtitle}>{pagesByNotebook[book.id] ?? 0} бет · {t.name}</Text><View style={[styles.bookBottom, { backgroundColor: t.accent }]} /></View>
+          <View style={[styles.book, { backgroundColor: t.cover }]}><View style={styles.bookSpine} /><Text style={styles.bookOrnament}>{t.ornament}</Text><Icon size={23} color="#F3DEB5" strokeWidth={1.4} /><Text style={styles.bookTitle}>{book.title}</Text><Text style={styles.bookSubtitle}>{book.type === 'general' ? 'Жалпы дәптер' : book.type === 'journal' ? 'Күнделік' : book.type === 'vocabulary' ? 'Сөздік' : 'Жоспар'} · {pagesByNotebook[book.id] ?? 0} бет</Text><View style={[styles.bookBottom, { backgroundColor: t.accent }]} /></View>
         </TouchableOpacity>
         <View style={styles.bookActions}><TouchableOpacity onPress={() => void reorderNotebook(db, book.id, -1).then(refresh)} disabled={index === 0} accessibilityLabel="Дәптерді солға жылжыту"><ChevronLeft size={16} color={index === 0 ? '#D5CCC1' : colors.muted} /></TouchableOpacity><TouchableOpacity onPress={() => openManage(book)} accessibilityLabel="Дәптерді баптау"><ChevronDown size={16} color={colors.muted} /></TouchableOpacity><TouchableOpacity onPress={() => void reorderNotebook(db, book.id, 1).then(refresh)} disabled={index === notebooks.length - 1} accessibilityLabel="Дәптерді оңға жылжыту"><ChevronRight size={16} color={index === notebooks.length - 1 ? '#D5CCC1' : colors.muted} /></TouchableOpacity></View>
       </View>; })}
@@ -84,6 +93,7 @@ export default function LibraryScreen() {
     <Modal visible={modal !== null} transparent animationType="fade" onRequestClose={() => setModal(null)}>
       <View style={styles.modalShade}><View style={styles.modalCard}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{modal === 'create' ? 'Жаңа дәптер' : modal === 'rename' ? 'Дәптердің атауы' : 'Дәптер тақырыбы'}</Text><TouchableOpacity onPress={() => setModal(null)}><X size={20} color={colors.muted} /></TouchableOpacity></View>
         {modal !== 'theme' ? <TextField label="Атауы" value={title} onChangeText={setTitle} placeholder="Мысалы, Саяхаттар" autoFocus /> : null}
+        {modal === 'create' ? <View><Text style={styles.themeLabel}>Дәптер түрі</Text><View style={styles.themeGrid}>{([['general', 'Жалпы дәптер'], ['journal', 'Күнделік'], ['vocabulary', 'Сөздік'], ['planner', 'Жоспар']] as const).map(([type, label]) => <TouchableOpacity key={type} onPress={() => setNotebookType(type)} style={[{ paddingHorizontal: 11, paddingVertical: 9, borderRadius: 11, backgroundColor: '#EFE8DE', borderWidth: 1, borderColor: 'transparent' }, notebookType === type ? { backgroundColor: '#E8D7C2', borderColor: colors.accent } : null]}><Text style={[{ color: colors.muted, fontSize: 11, fontWeight: '600' }, notebookType === type ? { color: colors.ink, fontWeight: '700' } : null]}>{label}</Text></TouchableOpacity>)}</View></View> : null}
         {(modal === 'theme' || modal === 'create') ? <View><Text style={styles.themeLabel}>Тақырып</Text><View style={styles.themeGrid}>{themeIds.map((id) => { const item = themes[id]; return <TouchableOpacity key={id} onPress={() => setTheme(id)} style={[styles.themeChip, { backgroundColor: item.cover, borderColor: theme === id ? item.accent : 'transparent' }]}><Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>{item.ornament}  {item.name}</Text></TouchableOpacity>; })}</View></View> : null}
         <PrimaryButton title={modal === 'theme' ? 'Тақырыпты сақтау' : 'Дәптерді сақтау'} onPress={() => void saveModal()} style={{ marginTop: 18 }} />
       </View></View>

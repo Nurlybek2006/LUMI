@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { ArrowLeft, BookHeart, BookOpen, CalendarCheck, Languages, Search as SearchIcon, X } from 'lucide-react-native';
+import { ArrowLeft, BookHeart, BookOpen, CalendarCheck, Languages, Search as SearchIcon, X, FileText } from 'lucide-react-native';
 import { AppScreen, Card, colors } from '@/components/ui';
 import { searchAll } from '@/database/search';
 
-type Result = { kind: string; id: string; title: string; subtitle: string; date?: string; notebookId?: string };
-const icons: Record<string, typeof BookOpen> = { Жазба: BookHeart, Жоспар: CalendarCheck, Сөздік: Languages, Дәптер: BookOpen };
+type Result = { kind: 'entry' | 'page' | 'task' | 'word' | 'notebook'; id: string; title: string; subtitle: string; date?: string; notebookId?: string };
+const labels = { entry: 'Күнделік жазбасы', page: 'Дәптер беті', task: 'Жоспар', word: 'Сөздік', notebook: 'Дәптер' } as const;
+const icons: Record<Result['kind'], typeof BookOpen> = { entry: BookHeart, page: FileText, task: CalendarCheck, word: Languages, notebook: BookOpen };
 
 export default function SearchScreen() {
   const db = useSQLiteContext();
@@ -19,14 +20,15 @@ export default function SearchScreen() {
     return () => clearTimeout(timer);
   }, [db, query]);
   const openResult = (item: Result) => {
-    if (item.kind === 'Дәптер') router.push({ pathname: '/notebook/[id]', params: { id: item.id } });
-    else if (item.kind === 'Жазба' && item.date) router.push({ pathname: '/(tabs)/journal', params: { date: item.date, ...(item.notebookId ? { notebookId: item.notebookId } : {}) } });
-    else if (item.kind === 'Жоспар' && item.date) router.push({ pathname: '/(tabs)/planner', params: { date: item.date } });
-    else if (item.kind === 'Сөздік') router.push('/(tabs)/vocabulary');
+    if (item.kind === 'notebook') router.push({ pathname: '/notebook/[id]', params: { id: item.notebookId ?? item.id } });
+    else if (item.kind === 'entry' && item.notebookId && item.date) router.push({ pathname: '/notebook/[id]', params: { id: item.notebookId, date: item.date } });
+    else if (item.kind === 'page' && item.notebookId) router.push({ pathname: '/notebook/[id]', params: { id: item.notebookId, pageId: item.id } });
+    else if (item.kind === 'task') router.push({ pathname: '/task/[id]', params: { id: item.id } });
+    else if (item.kind === 'word') router.push({ pathname: '/(tabs)/vocabulary', params: { wordId: item.id, ...(item.notebookId ? { notebookId: item.notebookId } : {}) } });
   };
   return <AppScreen title="Іздеу" subtitle="Жеке кітапханаңыздан табыңыз" scroll={false} contentStyle={{ paddingHorizontal: 16 }} right={<TouchableOpacity style={styles.back} onPress={() => router.back()}><ArrowLeft size={19} color={colors.ink} /></TouchableOpacity>}>
     <View style={styles.inputRow}><SearchIcon size={19} color={colors.muted} /><TextInput value={query} onChangeText={setQuery} placeholder="Сөз, тақырып, жоспар…" placeholderTextColor="#A79B8E" style={styles.input} returnKeyType="search" autoFocus accessibilityLabel="Мазмұннан іздеу" />{query ? <TouchableOpacity onPress={() => setQuery('')}><X size={18} color={colors.muted} /></TouchableOpacity> : null}</View>
-    {!query.trim() ? <Card style={styles.tip}><Text style={styles.tipTitle}>Нені табу керек?</Text><Text style={styles.tipText}>Күнделік жазбасын, тапсырманы, сөзді немесе дәптердің атауын жазыңыз.</Text></Card> : <ScrollView contentContainerStyle={{ paddingBottom: 28 }} keyboardShouldPersistTaps="handled">{searching ? <Text style={styles.status}>Іздеп жатыр…</Text> : results.length ? <><Text style={styles.count}>{results.length} нәтиже</Text>{results.map((item, index) => { const Icon = icons[item.kind] ?? BookOpen; return <TouchableOpacity key={`${item.kind}-${item.id}-${index}`} onPress={() => openResult(item)}><Card style={styles.result}><View style={styles.resultIcon}><Icon size={17} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.kind}>{item.kind}</Text><Text style={styles.resultTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.resultSub} numberOfLines={2}>{item.subtitle}</Text></View><Text style={styles.arrow}>›</Text></Card></TouchableOpacity>; })}</> : <Card style={styles.tip}><Text style={styles.tipTitle}>Нәтиже табылмады</Text><Text style={styles.tipText}>Басқа сөзбен немесе қысқа тіркеспен көріңіз.</Text></Card>}</ScrollView>}
+    {!query.trim() ? <Card style={styles.tip}><Text style={styles.tipTitle}>Нені табу керек?</Text><Text style={styles.tipText}>Күнделік жазбасын, тапсырманы, сөзді немесе дәптердің атауын жазыңыз.</Text></Card> : <ScrollView contentContainerStyle={{ paddingBottom: 28 }} keyboardShouldPersistTaps="handled">{searching ? <Text style={styles.status}>Іздеп жатыр…</Text> : results.length ? <><Text style={styles.count}>{results.length} нәтиже</Text>{results.map((item, index) => { const Icon = icons[item.kind] ?? BookOpen; return <TouchableOpacity key={`${item.kind}-${item.id}-${index}`} onPress={() => openResult(item)}><Card style={styles.result}><View style={styles.resultIcon}><Icon size={17} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.kind}>{labels[item.kind]}</Text><Text style={styles.resultTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.resultSub} numberOfLines={2}>{item.subtitle}</Text></View><Text style={styles.arrow}>›</Text></Card></TouchableOpacity>; })}</> : <Card style={styles.tip}><Text style={styles.tipTitle}>Нәтиже табылмады</Text><Text style={styles.tipText}>Басқа сөзбен немесе қысқа тіркеспен көріңіз.</Text></Card>}</ScrollView>}
   </AppScreen>;
 }
 

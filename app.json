@@ -8,6 +8,7 @@
     "android": {
       "softwareKeyboardLayoutMode": "resize",
       "package": "app.lumi.journal",
+      "versionCode": 2,
       "allowBackup": false
     },
     "plugins": [

@@ -9,12 +9,13 @@ import { addLocalDays, localDate } from '@/utils/core';
 import type { PlannerTask } from '@/types/models';
 
 export default function PlannerScreen() {
-  const params = useLocalSearchParams<{ date?: string }>();
+  const params = useLocalSearchParams<{ date?: string; notebookId?: string }>();
   const initialDate = typeof params.date === 'string' ? params.date : localDate();
-  return <PlannerForDate key={initialDate} initialDate={initialDate} />;
+  const notebookId = typeof params.notebookId === 'string' ? params.notebookId : 'plans';
+  return <PlannerForDate key={`${initialDate}:${notebookId}`} initialDate={initialDate} notebookId={notebookId} />;
 }
 
-function PlannerForDate({ initialDate }: { initialDate: string }) {
+function PlannerForDate({ initialDate, notebookId }: { initialDate: string; notebookId: string }) {
   const db = useSQLiteContext();
   const router = useRouter();
   const [date, setDate] = useState(initialDate);
@@ -29,7 +30,7 @@ function PlannerForDate({ initialDate }: { initialDate: string }) {
   const ratio = tasks.length ? done / tasks.length : 0;
   const dateTitle = date === localDate() ? 'Бүгін' : date === addLocalDays(localDate(), 1) ? 'Ертең' : new Intl.DateTimeFormat('kk-KZ', { day: 'numeric', month: 'long', weekday: 'long' }).format(new Date(`${date}T12:00:00`));
 
-  const refresh = useCallback(async () => { setTasks(await listTasks(db, date)); }, [db, date]);
+  const refresh = useCallback(async () => { setTasks(await listTasks(db, date, notebookId)); }, [db, date, notebookId]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
   const stepDate = (days: number) => setDate((value) => addLocalDays(value, days));
   const openAdd = () => { setEditing(null); setTitle(''); setTime(''); setPriority(0); setModal(true); };
@@ -40,7 +41,7 @@ function PlannerForDate({ initialDate }: { initialDate: string }) {
     setSaving(true);
     try {
       if (editing) await updateTask(db, editing.id, { title: title.trim(), priority, dueTime: time || null });
-      else await addTask(db, date, title.trim(), priority, time || null);
+      else await addTask(db, date, title.trim(), priority, time || null, notebookId);
       setModal(false); await refresh();
     } catch (error) { Alert.alert('Жоспар сақталмады', error instanceof Error ? error.message : 'Қайта көріңіз.'); }
     finally { setSaving(false); }

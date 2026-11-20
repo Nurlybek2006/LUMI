@@ -8,7 +8,7 @@
     "android": "expo run:android",
     "prebuild": "expo prebuild",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --experimental-default-type=module -e \"await Promise.all([import('./tests/core.test.ts'), import('./tests/database.test.ts'), import('./tests/autosave.test.ts'), import('./tests/backup.test.ts')])\"",
+    "test": "node --experimental-strip-types --experimental-default-type=module -e \"await Promise.all([import('./tests/core.test.ts'), import('./tests/database.test.ts'), import('./tests/autosave.test.ts'), import('./tests/backup.test.ts'), import('./tests/refactor.test.ts')])\"",
     "lint": "eslint app src tests app.config.js eslint.config.js --max-warnings 0"
   },
   "dependencies": {

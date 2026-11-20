@@ -1,9 +1,11 @@
 export type ThemeId = 'classic' | 'halloween' | 'winter' | 'creative' | 'midnight' | 'warm';
-export type BlockType = 'paragraph' | 'heading' | 'quote' | 'list' | 'checklist' | 'code' | 'image';
+export type NotebookType = 'general' | 'journal' | 'vocabulary' | 'planner';
+export type BlockType = 'paragraph' | 'heading' | 'quote' | 'list' | 'checklist' | 'code' | 'image' | 'vocabulary_columns';
 
 export interface Notebook {
   id: string;
   title: string;
+  type: NotebookType;
   icon: string;
   themeId: ThemeId;
   sortOrder: number;
@@ -28,9 +30,24 @@ export interface EntryBlock {
   text?: string;
   uri?: string;
   checked?: boolean;
+  level?: 1 | 2 | 3;
+  ordered?: boolean;
+  languageCode?: string;
+  columns?: { languageCode: string; title: string; cells: string[] }[];
+}
+export interface NotebookPage {
+  id: string;
+  notebookId: string;
+  title: string;
+  content: string;
+  blocks: EntryBlock[];
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface PlannerTask {
   id: string;
+  notebookId?: string;
   date: string;
   title: string;
   priority: number;
@@ -53,4 +70,8 @@ export interface VocabularyWord {
   repetitions: number;
   nextReview: string;
   createdAt: string;
+  notebookId?: string;
+  translations?: VocabularyTranslation[];
+  tags?: string[];
 }
+export interface VocabularyTranslation { id: string; entryId: string; languageCode: string; value: string; displayOrder: number }

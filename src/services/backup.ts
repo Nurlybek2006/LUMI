@@ -7,7 +7,7 @@ import { fromByteArray } from 'base64-js';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { randomUUID } from 'expo-crypto';
 import { validateBackupManifest, safeArchivePath } from '@/utils/core';
-import { backupTableNames as tableNames, replaceBackupTables, validateBackupData, type BackupData } from '@/services/backupData';
+import { backupTableNames as tableNames, normalizeBackupData, replaceBackupTables, validateBackupData, type BackupData } from '@/services/backupData';
 
 type BackupManifest = { format: 'lumi-backup'; version: 1; createdAt: string; database: 'data.json'; files: string[]; checksums: Record<string, string> };
 const MAX_BACKUP_BYTES = 400 * 1024 * 1024;
@@ -53,13 +53,13 @@ async function snapshot(db: SQLite.SQLiteDatabase): Promise<BackupData> {
       tables[name] = rows;
     }
   });
-  return { schemaVersion: 1, tables };
+  return { schemaVersion: 2, tables };
 }
 
 export async function exportBackup(db: SQLite.SQLiteDatabase): Promise<string> {
   const data = snapshot(db);
   const snapshotData = await data;
-  const mediaRows = snapshotData.tables.media_assets;
+  const mediaRows = [...snapshotData.tables.media_assets, ...snapshotData.tables.notebook_page_media];
   const files: Record<string, Uint8Array> = { 'data.json': strToU8(JSON.stringify(snapshotData)) };
   const checksums: Record<string, string> = { 'data.json': await checksum(files['data.json']!) };
   for (const row of mediaRows) {
@@ -67,9 +67,11 @@ export async function exportBackup(db: SQLite.SQLiteDatabase): Promise<string> {
     if (!safeArchivePath(relativePath) || !relativePath.startsWith('media/')) throw new Error('Сурет жолы жарамсыз, сақтық көшірме тоқтатылды.');
     const file = new File(Paths.document, relativePath);
     if (!file.exists) throw new Error(`Жазба суреті табылмады: ${relativePath}`);
-    const bytes = await file.bytes();
-    files[relativePath] = bytes;
-    checksums[relativePath] = await checksum(bytes);
+    if (!files[relativePath]) {
+      const bytes = await file.bytes();
+      files[relativePath] = bytes;
+      checksums[relativePath] = await checksum(bytes);
+    }
   }
   if (Object.values(files).reduce((total, bytes) => total + bytes.byteLength, 0) > MAX_BACKUP_BYTES) throw new Error('Сақтық көшірме файлы 400 МБ-тан үлкен.');
   const manifest: BackupManifest = { format: 'lumi-backup', version: 1, createdAt: new Date().toISOString(), database: 'data.json', files: Object.keys(files), checksums };
@@ -104,9 +106,11 @@ export async function importBackup(db: SQLite.SQLiteDatabase, confirmReplace: (c
   let parsed: unknown;
   try { parsed = JSON.parse(strFromU8(dataBytes)); } catch { throw new Error('Деректер файлы бүлінген.'); }
   if (!validateBackupData(parsed)) throw new Error('Сақтық көшірмедегі деректер құрылымы жарамсыз.');
-  const data = parsed;
+  const data = normalizeBackupData(parsed);
+  if (!data) throw new Error('Сақтық көшірме деректерінің құрылымы жарамсыз.');
   const mediaPaths = new Set<string>();
-  for (const row of data.tables.media_assets) {
+  const mediaRows = [...data.tables.media_assets, ...data.tables.notebook_page_media];
+  for (const row of mediaRows) {
     const oldPath = String(row.relative_path ?? '');
     if (!oldPath.startsWith('media/') || !safeArchivePath(oldPath) || !manifest.files.includes(oldPath)) throw new Error(`Сурет файлы сақтық көшірмеде жоқ: ${oldPath}`);
     mediaPaths.add(oldPath);
@@ -116,6 +120,10 @@ export async function importBackup(db: SQLite.SQLiteDatabase, confirmReplace: (c
   for (const row of data.tables.entries) {
     const blocks = JSON.parse(String(row.blocks_json)) as { type?: string; uri?: string }[];
     if (blocks.some((block) => block.type === 'image' && (!block.uri || !assetPaths.has(block.uri)))) throw new Error('Жазба суреттерінің бірі архивте тіркелмеген.');
+  }
+  for (const row of data.tables.notebook_pages) {
+    const blocks = JSON.parse(String(row.blocks_json)) as { type?: string; uri?: string }[];
+    if (blocks.some((block) => block.type === 'image' && (!block.uri || !mediaPaths.has(block.uri)))) throw new Error('Дәптер бетіндегі сурет архивте жоқ.');
   }
 
   const counts = { notebookCount: data.tables.notebooks.length, entryCount: data.tables.entries.length };
@@ -129,7 +137,7 @@ export async function importBackup(db: SQLite.SQLiteDatabase, confirmReplace: (c
   const pathMap = new Map<string, string>();
   const stagedFiles = new Map<string, { newPath: string; file: File }>();
   try {
-    for (const oldPath of new Set(data.tables.media_assets.map((r) => String(r.relative_path)))) {
+    for (const oldPath of new Set(mediaRows.map((r) => String(r.relative_path)))) {
       const extension = oldPath.split('.').pop()?.replace(/[^a-z0-9]/giu, '') || 'img';
       const newPath = `media/${randomUUID()}.${extension}`;
       const stagedFile = new File(staging, `${randomUUID()}.${extension}`);
@@ -149,12 +157,22 @@ export async function importBackup(db: SQLite.SQLiteDatabase, confirmReplace: (c
       if (payload.uri && pathMap.has(payload.uri)) payload.uri = pathMap.get(payload.uri)!;
       row.payload_json = JSON.stringify(payload);
     }
+    for (const row of data.tables.notebook_pages) {
+      const blocks = JSON.parse(String(row.blocks_json)) as { uri?: string }[];
+      for (const block of blocks) if (block.uri && pathMap.has(block.uri)) block.uri = pathMap.get(block.uri)!;
+      row.blocks_json = JSON.stringify(blocks);
+    }
+    for (const row of data.tables.notebook_page_media) row.relative_path = pathMap.get(String(row.relative_path))!;
   } catch (error) {
     if (staging.exists) staging.delete();
     throw error instanceof Error ? error : new Error('Жазба блоктарының құрылымы жарамсыз.');
   }
 
-  const oldMediaPaths = (await db.getAllAsync<{ relative_path: string }>('SELECT relative_path FROM media_assets')).map((row) => row.relative_path);
+  const oldMediaRows = await Promise.all([
+    db.getAllAsync<{ relative_path: string }>('SELECT relative_path FROM media_assets'),
+    db.getAllAsync<{ relative_path: string }>('SELECT relative_path FROM notebook_page_media')
+  ]);
+  const oldMediaPaths = oldMediaRows.flat().map((row) => row.relative_path);
   const installedPaths: string[] = [];
   try {
     for (const { newPath, file } of stagedFiles.values()) {
