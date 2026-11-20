@@ -7,6 +7,7 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTi
 import { ArrowLeft, ArrowRight, Check, RotateCcw, Sparkles, X } from 'lucide-react-native';
 import { AppScreen, colors } from '@/components/ui';
 import { listWords, reviewWord } from '@/database/repository';
+import { readSetting } from '@/database/settings';
 import { addLocalDays, localDate, nextReview } from '@/utils/core';
 import type { VocabularyWord } from '@/types/models';
 
@@ -18,18 +19,20 @@ export default function ReviewScreen() {
   const [reviewed, setReviewed] = useState(0);
   const [correct, setCorrect] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
   const offset = useSharedValue(0);
   const scale = useSharedValue(1);
   const card = queue[index];
 
   const load = useCallback(async () => {
-    const all = await listWords(db);
+    const [all, motion] = await Promise.all([listWords(db), readSetting(db, 'reduced_motion')]);
     const due = all.filter((word) => !word.learned && word.nextReview <= localDate());
+    setReducedMotion(motion === 'true');
     setQueue(due); setIndex(0); setReviewed(0); setCorrect(0); setShowBack(false); setLoaded(true);
   }, [db]);
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
-  useEffect(() => { offset.value = withSpring(0); scale.value = withSpring(1); }, [index, offset, scale]);
+  useEffect(() => { offset.value = reducedMotion ? 0 : withSpring(0); scale.value = reducedMotion ? 1 : withSpring(1); }, [index, offset, scale, reducedMotion]);
   const advance = (direction: number) => {
     setShowBack(false);
     if (direction < 0) setIndex((value) => Math.max(0, value - 1)); else setIndex((value) => Math.min(queue.length - 1, value + 1));
@@ -38,18 +41,18 @@ export default function ReviewScreen() {
     if (event.translationX < -55) {
       // Reanimated shared values are intentionally mutable inside gesture callbacks.
       // eslint-disable-next-line react-hooks/immutability -- Reanimated gesture state is mutable by design.
-      offset.value = withTiming(-65, { duration: 100 }, () => runOnJS(advance)(1));
+      offset.value = withTiming(-65, { duration: reducedMotion ? 0 : 100 }, () => runOnJS(advance)(1));
     } else if (event.translationX > 55) {
-      offset.value = withTiming(65, { duration: 100 }, () => runOnJS(advance)(-1));
+      offset.value = withTiming(65, { duration: reducedMotion ? 0 : 100 }, () => runOnJS(advance)(-1));
     }
   });
   const animatedStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }, { scale: scale.value }, { rotateZ: `${offset.value / 18}deg` }] }));
   const flipCard = () => {
     // Reanimated shared values are intentionally mutable inside animation callbacks.
     // eslint-disable-next-line react-hooks/immutability -- Reanimated animation state is mutable by design.
-    scale.value = withTiming(0.97, { duration: 100 }, () => {
+    scale.value = withTiming(0.97, { duration: reducedMotion ? 0 : 100 }, () => {
       runOnJS(setShowBack)(!showBack);
-      scale.value = withSpring(1);
+      scale.value = reducedMotion ? 1 : withSpring(1);
     });
   };
 

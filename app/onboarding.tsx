@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { BookHeart, Check, Fingerprint, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react-native';
 import { AppScreen, Card, PrimaryButton, TextField, colors } from '@/components/ui';
 import { themes, themeIds } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
-import { setPin } from '@/services/security';
+import { setBiometricEnabled, setPin } from '@/services/security';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { writeSetting } from '@/database/settings';
 import { updateNotebook } from '@/database/repository';
 
@@ -16,13 +17,20 @@ export default function OnboardingScreen() {
   const [pin, setPinValue] = useState('');
   const [pinAgain, setPinAgain] = useState('');
   const [showPin, setShowPin] = useState(false);
+  const [biometrics, setBiometrics] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const finish = async () => {
     if (pin && (pin.length < 4 || pin !== pinAgain)) { Alert.alert('PIN тексеріңіз', 'Екі өріске бірдей, кемінде төрт сан енгізіңіз.'); return; }
+    if (biometrics && !pin) { Alert.alert('Алдымен PIN орнатыңыз', 'Биометрия PIN қорғанысымен бірге жұмыс істейді.'); return; }
     setSaving(true);
     try {
+      if (biometrics) {
+        const [hardware, enrolled] = await Promise.all([LocalAuthentication.hasHardwareAsync(), LocalAuthentication.isEnrolledAsync()]);
+        if (!hardware || !enrolled) { Alert.alert('Биометрия қолжетімсіз', 'Құрылғыда саусақ ізі немесе бет тану бапталуы керек.'); return; }
+      }
       if (pin) await setPin(pin);
+      await setBiometricEnabled(Boolean(pin && biometrics));
       await updateNotebook(db, 'diary', { themeId: theme });
       await writeSetting(db, 'default_theme', theme);
       await writeSetting(db, 'onboarding_complete', 'true');
@@ -46,8 +54,8 @@ export default function OnboardingScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingBottom: 4 }}>
           {themeIds.map((id) => { const item = themes[id]; return <TouchableOpacity key={id} onPress={() => setTheme(id)} style={[styles.theme, { backgroundColor: item.cover, borderColor: theme === id ? item.accent : 'transparent' }]}><Text style={{ color: '#FFF9F1', fontFamily: 'serif', fontSize: 21 }}>{item.ornament}</Text><Text style={styles.themeName}>{item.name}</Text>{theme === id ? <Check size={14} color="#FFF9F1" style={styles.selected} /> : null}</TouchableOpacity>; })}
         </ScrollView>
-        <TouchableOpacity onPress={() => setShowPin((value) => !value)} style={styles.pinToggle}><Fingerprint size={19} color={colors.accent} /><Text style={styles.pinToggleText}>{showPin ? 'PIN-ді қазір орнатпау' : 'Қосымша PIN орнату (қалауыңызша)'}</Text></TouchableOpacity>
-        {showPin ? <View style={styles.pinFields}><TextField label="4–8 сандық PIN" value={pin} onChangeText={(v) => setPinValue(v.replace(/\D/gu, '').slice(0, 8))} secureTextEntry keyboardType="number-pad" /><TextField label="PIN-ді қайталау" value={pinAgain} onChangeText={(v) => setPinAgain(v.replace(/\D/gu, '').slice(0, 8))} secureTextEntry keyboardType="number-pad" /></View> : null}
+        <TouchableOpacity onPress={() => { if (showPin) setBiometrics(false); setShowPin(!showPin); }} style={styles.pinToggle}><Fingerprint size={19} color={colors.accent} /><Text style={styles.pinToggleText}>{showPin ? 'PIN-ді қазір орнатпау' : 'Қосымша PIN орнату (қалауыңызша)'}</Text></TouchableOpacity>
+        {showPin ? <View style={styles.pinFields}><TextField label="4–8 сандық PIN" value={pin} onChangeText={(v) => setPinValue(v.replace(/\D/gu, '').slice(0, 8))} secureTextEntry keyboardType="number-pad" /><TextField label="PIN-ді қайталау" value={pinAgain} onChangeText={(v) => setPinAgain(v.replace(/\D/gu, '').slice(0, 8))} secureTextEntry keyboardType="number-pad" /><View style={styles.biometricRow}><View style={{ flex: 1 }}><Text style={styles.biometricsTitle}>Биометриямен ашу</Text><Text style={styles.biometricsHint}>Құрылғы қолдаса, PIN орнына саусақ ізі не бет тану</Text></View><Switch value={biometrics} onValueChange={setBiometrics} trackColor={{ true: '#AF865C' }} /></View></View> : null}
         <PrimaryButton title={saving ? 'Дайындалып жатыр…' : 'LUMI-ді бастау'} onPress={() => void finish()} disabled={saving} style={{ marginTop: 22 }} />
         <Text style={styles.footer}>Сақтық көшірме баптаулардан қолжетімді</Text>
       </ScrollView>
@@ -55,5 +63,5 @@ export default function OnboardingScreen() {
   </AppScreen>;
 }
 
-const styles = StyleSheet.create({ body: { padding: 24, paddingTop: 28, paddingBottom: 32 }, logo: { width: 72, height: 72, borderRadius: 24, backgroundColor: '#EFE3D2', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 12 }, logoText: { fontFamily: 'serif', fontSize: 48, color: '#80543D', lineHeight: 56 }, title: { fontFamily: 'serif', color: colors.ink, fontSize: 31, textAlign: 'center', letterSpacing: 5 }, subtitle: { color: colors.accent, textAlign: 'center', fontSize: 13, letterSpacing: 2, marginTop: 2 }, lead: { color: colors.muted, fontSize: 16, textAlign: 'center', marginTop: 18, marginBottom: 20 }, benefits: { gap: 9 }, benefit: { flexDirection: 'row', gap: 13, padding: 14 }, benefitTitle: { color: colors.ink, fontWeight: '700', fontSize: 14 }, benefitText: { color: colors.muted, fontSize: 12, marginTop: 3, lineHeight: 17 }, section: { color: colors.ink, fontFamily: 'serif', fontWeight: '700', marginTop: 24, marginBottom: 10, fontSize: 16 }, theme: { width: 114, height: 84, borderRadius: 13, padding: 12, borderWidth: 2, justifyContent: 'space-between' }, themeName: { color: '#FFF9F1', fontSize: 12, fontWeight: '700' }, selected: { position: 'absolute', right: 8, top: 8 }, pinToggle: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 18, paddingVertical: 8 }, pinToggleText: { color: colors.accent, fontSize: 13, fontWeight: '700' }, pinFields: { gap: 12, marginTop: 8 }, footer: { color: '#A69A8D', textAlign: 'center', fontSize: 11, marginTop: 14 }
+const styles = StyleSheet.create({ body: { padding: 24, paddingTop: 28, paddingBottom: 32 }, logo: { width: 72, height: 72, borderRadius: 24, backgroundColor: '#EFE3D2', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 12 }, logoText: { fontFamily: 'serif', fontSize: 48, color: '#80543D', lineHeight: 56 }, title: { fontFamily: 'serif', color: colors.ink, fontSize: 31, textAlign: 'center', letterSpacing: 5 }, subtitle: { color: colors.accent, textAlign: 'center', fontSize: 13, letterSpacing: 2, marginTop: 2 }, lead: { color: colors.muted, fontSize: 16, textAlign: 'center', marginTop: 18, marginBottom: 20 }, benefits: { gap: 9 }, benefit: { flexDirection: 'row', gap: 13, padding: 14 }, benefitTitle: { color: colors.ink, fontWeight: '700', fontSize: 14 }, benefitText: { color: colors.muted, fontSize: 12, marginTop: 3, lineHeight: 17 }, section: { color: colors.ink, fontFamily: 'serif', fontWeight: '700', marginTop: 24, marginBottom: 10, fontSize: 16 }, theme: { width: 114, height: 84, borderRadius: 13, padding: 12, borderWidth: 2, justifyContent: 'space-between' }, themeName: { color: '#FFF9F1', fontSize: 12, fontWeight: '700' }, selected: { position: 'absolute', right: 8, top: 8 }, pinToggle: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 18, paddingVertical: 8 }, pinToggleText: { color: colors.accent, fontSize: 13, fontWeight: '700' }, pinFields: { gap: 12, marginTop: 8 }, biometricRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4, paddingVertical: 7 }, biometricsTitle: { color: colors.ink, fontWeight: '700', fontSize: 13 }, biometricsHint: { color: colors.muted, fontSize: 10, marginTop: 3, lineHeight: 15 }, footer: { color: '#A69A8D', textAlign: 'center', fontSize: 11, marginTop: 14 }
 });

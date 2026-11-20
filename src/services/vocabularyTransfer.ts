@@ -12,7 +12,8 @@ export async function exportVocabulary(db: SQLite.SQLiteDatabase): Promise<void>
   const words = rows.map((row) => ({ id: String(row.id), source: String(row.source), translation: String(row.translation), sourceLanguage: String(row.source_language), targetLanguage: String(row.target_language), example: String(row.example), exampleTranslation: String(row.example_translation), notes: String(row.notes), favorite: Boolean(row.favorite), learned: Boolean(row.learned), repetitions: Number(row.repetitions), nextReview: String(row.next_review), createdAt: String(row.created_at) }));
   const data: TransferDocument = { format: 'lumi-vocabulary', version: 1, exportedAt: new Date().toISOString(), words };
   const folder = new Directory(Paths.cache, 'exports'); folder.create({ intermediates: true, idempotent: true });
-  const file = new File(folder, 'lumi-vocabulary.json'); file.write(JSON.stringify(data, null, 2));
+  const file = new File(folder, 'lumi-vocabulary.json'); await file.write(JSON.stringify(data, null, 2));
+  if (!file.exists) throw new Error('JSON экспорт файлы жасалмады.');
   if (!(await Sharing.isAvailableAsync())) throw new Error('Файл бөлісу қолжетімсіз.');
   await Sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: 'LUMI сөздігін экспорттау' });
 }

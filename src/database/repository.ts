@@ -113,10 +113,12 @@ export async function reorderTask(db: SQLite.SQLiteDatabase, date: string, taskI
   });
 }
 
-export async function listWords(db: SQLite.SQLiteDatabase, query = ''): Promise<VocabularyWord[]> {
+export type VocabularySort = 'due' | 'alphabetical' | 'newest';
+export async function listWords(db: SQLite.SQLiteDatabase, query = '', sort: VocabularySort = 'due'): Promise<VocabularyWord[]> {
+  const ordering = sort === 'alphabetical' ? 'source COLLATE NOCASE, translation COLLATE NOCASE' : sort === 'newest' ? 'created_at DESC, source COLLATE NOCASE' : 'favorite DESC, next_review, created_at DESC';
   const rows = query.trim()
-    ? await db.getAllAsync<WordRow>('SELECT * FROM vocabulary_words WHERE source LIKE ? OR translation LIKE ? ORDER BY favorite DESC, next_review', `%${query}%`, `%${query}%`)
-    : await db.getAllAsync<WordRow>('SELECT * FROM vocabulary_words ORDER BY favorite DESC, next_review, created_at DESC');
+    ? await db.getAllAsync<WordRow>(`SELECT * FROM vocabulary_words WHERE source LIKE ? OR translation LIKE ? ORDER BY ${ordering}`, `%${query}%`, `%${query}%`)
+    : await db.getAllAsync<WordRow>(`SELECT * FROM vocabulary_words ORDER BY ${ordering}`);
   return rows.map(wordModel);
 }
 export async function saveWord(db: SQLite.SQLiteDatabase, input: Partial<VocabularyWord> & Pick<VocabularyWord, 'source' | 'translation'>): Promise<void> {
@@ -129,6 +131,9 @@ export async function saveWord(db: SQLite.SQLiteDatabase, input: Partial<Vocabul
     input.exampleTranslation ?? '', input.notes ?? '', input.favorite ? 1 : 0, input.learned ? 1 : 0, input.repetitions ?? 0, input.nextReview ?? date, input.createdAt ?? now());
 }
 export async function deleteWord(db: SQLite.SQLiteDatabase, wordId: string): Promise<void> { await db.runAsync('DELETE FROM vocabulary_words WHERE id=?', wordId); }
+export async function setWordLearningStatus(db: SQLite.SQLiteDatabase, wordId: string, learned: boolean): Promise<void> {
+  await db.runAsync('UPDATE vocabulary_words SET learned=?,repetitions=CASE WHEN ?=1 THEN repetitions ELSE 0 END,next_review=CASE WHEN ?=1 THEN next_review ELSE ? END WHERE id=?', learned ? 1 : 0, learned ? 1 : 0, learned ? 1 : 0, localDate(), wordId);
+}
 export async function reviewWord(db: SQLite.SQLiteDatabase, word: VocabularyWord, remembered: boolean, nextDate: string, repetitions: number): Promise<void> {
   const date = localDate();
   await db.withTransactionAsync(async () => {
@@ -137,34 +142,10 @@ export async function reviewWord(db: SQLite.SQLiteDatabase, word: VocabularyWord
     await db.runAsync('INSERT INTO activity_events(id,event_type,event_date,reference_id,created_at) VALUES(?,?,?,?,?)', id(), 'review', date, word.id, now());
   });
 }
-export async function searchAll(db: SQLite.SQLiteDatabase, query: string): Promise<{ kind: string; id: string; title: string; subtitle: string; date?: string; notebookId?: string }[]> {
-  const pattern = `%${query.trim()}%`;
-  if (!query.trim()) return [];
-  const ftsEnabled = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key='fts5_available'");
-  if (ftsEnabled?.value === 'true') {
-    try {
-      const phrase = `"${query.trim().replaceAll('"', '""')}"`;
-      const hits = await db.getAllAsync<{ kind: string; object_id: string; title: string; body: string; event_date: string; notebook_id: string }>('SELECT kind,object_id,title,body,event_date,notebook_id FROM content_fts WHERE content_fts MATCH ? ORDER BY rank LIMIT 60', phrase);
-      return hits.map((row) => ({ kind: row.kind === 'entry' ? 'Жазба' : row.kind === 'task' ? 'Жоспар' : row.kind === 'word' ? 'Сөздік' : 'Дәптер', id: row.object_id, title: row.title || row.event_date || row.body, subtitle: row.kind === 'entry' ? row.body.slice(0, 92) : row.kind === 'task' ? row.event_date : row.body, ...(row.event_date ? { date: row.event_date } : {}), ...(row.notebook_id ? { notebookId: row.notebook_id } : {}) }));
-    } catch { /* Fall through to the indexed date plus LIKE compatibility search. */ }
-  }
-  const [notes, tasks, words, notebooks] = await Promise.all([
-    db.getAllAsync<{ id: string; notebook_id: string; title: string; content: string; entry_date: string }>('SELECT id,notebook_id,title,content,entry_date FROM entries WHERE title LIKE ? OR content LIKE ? ORDER BY entry_date DESC LIMIT 30', pattern, pattern),
-    db.getAllAsync<{ id: string; title: string; task_date: string }>('SELECT id,title,task_date FROM tasks WHERE title LIKE ? ORDER BY task_date DESC LIMIT 20', pattern),
-    db.getAllAsync<{ id: string; source: string; translation: string }>('SELECT id,source,translation FROM vocabulary_words WHERE source LIKE ? OR translation LIKE ? LIMIT 20', pattern, pattern),
-    db.getAllAsync<{ id: string; title: string; theme_id: string }>('SELECT id,title,theme_id FROM notebooks WHERE title LIKE ? LIMIT 20', pattern)
-  ]);
-  return [
-    ...notes.map((r) => ({ kind: 'Жазба', id: r.id, title: r.title || r.entry_date, subtitle: r.content.slice(0, 92), date: r.entry_date, notebookId: r.notebook_id })),
-    ...tasks.map((r) => ({ kind: 'Жоспар', id: r.id, title: r.title, subtitle: r.task_date, date: r.task_date })),
-    ...words.map((r) => ({ kind: 'Сөздік', id: r.id, title: r.source, subtitle: r.translation })),
-    ...notebooks.map((r) => ({ kind: 'Дәптер', id: r.id, title: r.title, subtitle: r.theme_id }))
-  ];
-}
 export async function getStats(db: SQLite.SQLiteDatabase): Promise<{ entries: number; words: number; tasksDone: number; tasksTotal: number; wordsReviewedToday: number; wordsLearned: number; totalWords: number; streak: number; longest: number; monthlyDays: string[] }> {
   const entryDates = (await db.getAllAsync<{ entry_date: string }>('SELECT DISTINCT entry_date FROM entries WHERE content<>\'\' OR title<>\'\'')).map((r) => r.entry_date);
-  const textRows = await db.getAllAsync<{ content: string }>('SELECT content FROM entries');
-  const wordsWritten = textRows.reduce((sum, row) => sum + wordCount(row.content), 0);
+  const textRows = await db.getAllAsync<{ title: string; content: string }>('SELECT title,content FROM entries');
+  const wordsWritten = textRows.reduce((sum, row) => sum + wordCount(`${row.title} ${row.content}`), 0);
   const [entries, words, tasksDone, tasksTotal, reviewed, learned] = await Promise.all([
     db.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM entries WHERE title<>'' OR content<>'' OR tags_json<>'[]' OR mood IS NOT NULL"), db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM vocabulary_words'),
     db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM tasks WHERE completed=1'), db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM tasks'),

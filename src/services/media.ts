@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { randomUUID } from 'expo-crypto';
+import type * as SQLite from 'expo-sqlite';
 
 const mediaDirectory = new Directory(Paths.document, 'media');
 
@@ -20,4 +21,13 @@ export function mediaUri(relativePath: string): string {
 
 export function fileForRelativePath(relativePath: string): File {
   return new File(Paths.document, relativePath);
+}
+
+export async function pruneUnusedMedia(db: SQLite.SQLiteDatabase): Promise<void> {
+  if (!mediaDirectory.exists) return;
+  const rows = await db.getAllAsync<{ relative_path: string }>('SELECT relative_path FROM media_assets');
+  const referenced = new Set(rows.map((row) => new File(Paths.document, row.relative_path).uri));
+  for (const item of mediaDirectory.list()) {
+    if (item instanceof File && !referenced.has(item.uri)) item.delete();
+  }
 }

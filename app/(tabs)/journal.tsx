@@ -7,15 +7,16 @@ import { ArrowLeft, ArrowRight, Bold, CalendarDays, CheckSquare, Code2, Heading2
 import { AppScreen, TextField, colors } from '@/components/ui';
 import { deleteEntry, getEntry, listNotebooks, saveEntry } from '@/database/repository';
 import { SaveQueue } from '@/services/autosave';
-import { mediaUri, storeImage } from '@/services/media';
+import { mediaUri, pruneUnusedMedia, storeImage } from '@/services/media';
 import { addLocalDays, localDate } from '@/utils/core';
-import type { EntryBlock } from '@/types/models';
+import { getTheme } from '@/themes/registry';
+import type { EntryBlock, ThemeId } from '@/types/models';
 import { randomUUID } from 'expo-crypto';
 
 type SavePayload = { notebookId: string; date: string; title: string; content: string; blocks: EntryBlock[]; mood: string | null; tags: string[] };
 const moods = ['😊', '😌', '🤔', '😔', '🔥'];
 const blockKinds = [
-  { type: 'paragraph', label: 'Мәтін', icon: List }, { type: 'heading', label: 'Тақырып', icon: Heading2 },
+  { type: 'paragraph', label: 'Мәтін', icon: List }, { type: 'list', label: 'Тізім', icon: List }, { type: 'heading', label: 'Тақырып', icon: Heading2 },
   { type: 'quote', label: 'Дәйексөз', icon: Quote }, { type: 'checklist', label: 'Тізім', icon: CheckSquare }, { type: 'code', label: 'Код', icon: Code2 }
 ] as const;
 
@@ -30,6 +31,7 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
   const db = useSQLiteContext();
   const [date, setDate] = useState(initialDate);
   const [notebookId, setNotebookId] = useState('diary');
+  const [themeId, setThemeId] = useState<ThemeId>('classic');
   const [blocks, setBlocks] = useState<EntryBlock[]>([{ id: randomUUID(), type: 'paragraph', text: '' }]);
   const [title, setTitle] = useState('');
   const [mood, setMood] = useState<string | null>(null);
@@ -39,6 +41,7 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
   const [entryId, setEntryId] = useState<string | null>(null);
   const queueRef = useRef<SaveQueue<SavePayload> | null>(null);
   const latestPayload = useRef<SavePayload | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRefs = useRef<Record<string, TextInputInstance | null>>({});
   const selectionRef = useRef<Record<string, { start: number; end: number }>>({});
   const dateLabel = useMemo(() => new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${date}T12:00:00`)), [date]);
@@ -47,14 +50,17 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
     const hasContent = value.title.trim() || value.tags.length || value.blocks.some((block) => block.type === 'image' || Boolean(block.text?.trim()));
     if (!hasContent && !(await getEntry(db, value.notebookId, value.date))) { setSaveState('Жаңа жазба'); return; }
     const id = await saveEntry(db, value, entryId ?? undefined);
+    try { await pruneUnusedMedia(db); } catch { /* A media cleanup failure must not invalidate a saved journal entry. */ }
     setEntryId(id); setSaveState('Сақталды');
   });
+  const reportSaveFailure = useCallback((error: unknown) => setSaveState(error instanceof Error ? `Сақтау қатесі: ${error.message}` : 'Сақтау қатесі'), []);
 
   const load = useCallback(async (newDate: string) => {
     const books = await listNotebooks(db);
     const chosen = books.find((item) => item.id === requestedNotebookId) ?? books.find((item) => item.id === 'diary') ?? books[0];
     if (!chosen) { setLoaded(true); return; }
     setNotebookId(chosen.id);
+    setThemeId(chosen.themeId);
     const entry = await getEntry(db, chosen.id, newDate);
     setTitle(entry?.title ?? ''); setMood(entry?.mood ?? null); setTagsText(entry?.tags.join(', ') ?? '');
     setBlocks(entry?.blocks.length ? entry.blocks : [{ id: randomUUID(), type: 'paragraph', text: '' }]);
@@ -69,22 +75,27 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
     const payload: SavePayload = { notebookId, date, title, content: blocks.map((item) => item.text ?? '').join('\n'), blocks, mood, tags: tagsText.split(',').map((tag) => tag.trim()).filter(Boolean) };
     latestPayload.current = payload;
     const timer = setTimeout(() => {
+      saveTimerRef.current = null;
       setSaveState('Сақталып жатыр…');
-      void queueRef.current?.enqueue(payload).catch((error: unknown) => setSaveState(error instanceof Error ? `Сақтау қатесі: ${error.message}` : 'Сақтау қатесі'));
+      void queueRef.current?.enqueue(payload).catch(reportSaveFailure);
     }, 650);
-    return () => clearTimeout(timer);
-  }, [loaded, notebookId, date, title, blocks, mood, tagsText]);
+    saveTimerRef.current = timer;
+    return () => { clearTimeout(timer); if (saveTimerRef.current === timer) saveTimerRef.current = null; };
+  }, [loaded, notebookId, date, title, blocks, mood, tagsText, reportSaveFailure]);
   const flushLatest = useCallback(async () => {
     if (latestPayload.current) await queueRef.current?.enqueue(latestPayload.current);
     await queueRef.current?.flush();
   }, []);
-  useFocusEffect(useCallback(() => () => { void flushLatest(); }, [flushLatest]));
+  useFocusEffect(useCallback(() => () => { void flushLatest().catch(reportSaveFailure); }, [flushLatest, reportSaveFailure]));
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => { if (state !== 'active') void flushLatest(); });
+    const sub = AppState.addEventListener('change', (state) => { if (state !== 'active') void flushLatest().catch(reportSaveFailure); });
     return () => sub.remove();
-  }, [flushLatest]);
+  }, [flushLatest, reportSaveFailure]);
 
-  const changeDate = async (next: string) => { await flushLatest(); setLoaded(false); setDate(next); };
+  const changeDate = async (next: string) => {
+    try { await flushLatest(); setLoaded(false); setDate(next); }
+    catch (error) { reportSaveFailure(error); Alert.alert('Жазба сақталмады', error instanceof Error ? error.message : 'Қайта көріңіз.'); }
+  };
   const addBlock = (type: EntryBlock['type']) => setBlocks((items) => [...items, { id: randomUUID(), type, text: '', ...(type === 'checklist' ? { checked: false } : {}) }]);
   const updateBlock = (id: string, text: string) => setBlocks((items) => items.map((block) => block.id === id ? { ...block, text } : block));
   const deleteBlock = (id: string) => setBlocks((items) => items.length > 1 ? items.filter((block) => block.id !== id) : [{ id: randomUUID(), type: 'paragraph', text: '' }]);
@@ -114,24 +125,35 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
       latestPayload.current = { notebookId, date, title: '', content: '', blocks: [blank], mood: null, tags: [] };
     };
     if (!entryId) { clearDraft(); return; }
-    Alert.alert('Жазбаны өшіру керек пе?', 'Бұл әрекетті қайтару мүмкін емес.', [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Өшіру', style: 'destructive', onPress: () => { void deleteEntry(db, entryId).then(clearDraft); } }]);
+    Alert.alert('Жазбаны өшіру керек пе?', 'Бұл әрекетті қайтару мүмкін емес.', [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Өшіру', style: 'destructive', onPress: () => { void (async () => {
+      if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+      try {
+        await flushLatest();
+        await deleteEntry(db, entryId);
+        try { await pruneUnusedMedia(db); } catch { /* Removing the entry already committed; stale files can be cleaned later. */ }
+        clearDraft();
+      } catch (error) {
+        Alert.alert('Жазба өшірілмеді', error instanceof Error ? error.message : 'Қайта көріңіз.');
+      }
+    })(); } }]);
   };
 
-  return <AppScreen title="Күнделік" subtitle={saveState} right={<TouchableOpacity style={styles.iconButton} onPress={() => router.push('/calendar')}><CalendarDays size={19} color={colors.ink} /></TouchableOpacity>} scroll={false} contentStyle={{ paddingHorizontal: 15, paddingBottom: 0 }}>
+  const theme = getTheme(themeId);
+  return <AppScreen title="Күнделік" subtitle={saveState} themeId={themeId} right={<TouchableOpacity style={styles.iconButton} onPress={() => router.push('/calendar')}><CalendarDays size={19} color={colors.ink} /></TouchableOpacity>} scroll={false} contentStyle={{ paddingHorizontal: 15, paddingBottom: 0 }}>
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={8}>
       <View style={styles.dateBar}>
         <TouchableOpacity onPress={() => void changeDate(addLocalDays(date, -1))} style={styles.dateArrow}><ArrowLeft size={18} color={colors.ink} /></TouchableOpacity>
         <TouchableOpacity onPress={() => router.push('/calendar')} style={styles.dateCenter}><Text style={styles.dateText}>{dateLabel}</Text><Text style={styles.dateSub}>{date === localDate() ? 'Бүгінгі бет' : 'Күнді ауыстыру үшін күнтізбені ашыңыз'}</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => void changeDate(addLocalDays(date, 1))} style={[styles.dateArrow, date >= localDate() ? { opacity: 0.35 } : null]} disabled={date >= localDate()}><ArrowRight size={18} color={colors.ink} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => void changeDate(addLocalDays(date, 1))} style={styles.dateArrow} accessibilityLabel="Келесі күн"><ArrowRight size={18} color={colors.ink} /></TouchableOpacity>
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
-        <View style={styles.paper}><View style={styles.paperTop}><Text style={styles.paperBrand}>L U M I</Text><Text style={styles.pageNo}>✧</Text></View>
-          <TextInput value={title} onChangeText={setTitle} placeholder="Бүгінгі ойыңызға ат беріңіз" placeholderTextColor="#A99A87" style={styles.titleInput} maxLength={120} accessibilityLabel="Жазба тақырыбы" />
-          <View style={styles.rule} />
-          {!loaded ? <Text style={{ color: colors.muted, paddingVertical: 28 }}>Бет ашылып жатыр…</Text> : blocks.map((block) => <View key={block.id} style={[styles.block, block.type === 'quote' ? styles.quoteBlock : null, block.type === 'code' ? styles.codeBlock : null]}>
+        <View style={[styles.paper, { backgroundColor: theme.page, borderColor: theme.line }]}><View style={styles.paperTop}><Text style={[styles.paperBrand, { color: theme.muted }]}>L U M I</Text><Text style={[styles.pageNo, { color: theme.accent }]}>✧</Text></View>
+          <TextInput value={title} onChangeText={setTitle} placeholder="Бүгінгі ойыңызға ат беріңіз" placeholderTextColor={theme.muted} style={[styles.titleInput, { color: theme.ink, fontFamily: theme.serif }]} maxLength={120} accessibilityLabel="Жазба тақырыбы" />
+          <View style={[styles.rule, { backgroundColor: theme.line }]} />
+          {!loaded ? <Text style={{ color: theme.muted, paddingVertical: 28 }}>Бет ашылып жатыр…</Text> : blocks.map((block) => <View key={block.id} style={[styles.block, block.type === 'quote' ? [styles.quoteBlock, { borderLeftColor: theme.accent }] : null, block.type === 'code' ? [styles.codeBlock, { backgroundColor: theme.line }] : null]}>
             {block.type === 'image' && block.uri ? <View style={styles.imageWrap}><Image source={{ uri: mediaUri(block.uri) }} style={styles.entryImage} resizeMode="cover" /><TouchableOpacity style={styles.imageRemove} onPress={() => deleteBlock(block.id)} accessibilityLabel="Суретті өшіру"><Trash2 size={15} color="#FFF" /></TouchableOpacity></View> : <View style={styles.textBlockRow}>
               {block.type === 'checklist' ? <TouchableOpacity onPress={() => setBlocks((items) => items.map((b) => b.id === block.id ? { ...b, checked: !b.checked } : b))} style={[styles.checkbox, block.checked ? styles.checked : null]}><Text style={{ color: '#FFF', fontSize: 11 }}>{block.checked ? '✓' : ''}</Text></TouchableOpacity> : null}
-              <TextInput ref={(ref) => { inputRefs.current[block.id] = ref; }} value={block.text ?? ''} onChangeText={(text) => updateBlock(block.id, text)} onSelectionChange={(e) => { selectionRef.current[block.id] = e.nativeEvent.selection; }} placeholder={block.type === 'heading' ? 'Бөлім атауы' : block.type === 'quote' ? 'Есте қалсын деген сөз…' : block.type === 'code' ? 'Код үзіндісі…' : block.type === 'checklist' ? 'Тапсырма…' : 'Ойыңызды осы жерге жазыңыз…'} placeholderTextColor="#AA9C89" multiline style={[styles.bodyInput, block.type === 'heading' ? styles.headingInput : null, block.type === 'quote' ? styles.quoteInput : null, block.type === 'code' ? styles.codeInput : null, block.type === 'list' ? styles.listInput : null, block.checked ? { textDecorationLine: 'line-through', color: colors.muted } : null]} accessibilityLabel={`${block.type} мәтіні`} />
+              <TextInput ref={(ref) => { inputRefs.current[block.id] = ref; }} value={block.text ?? ''} onChangeText={(text) => updateBlock(block.id, text)} onSelectionChange={(e) => { selectionRef.current[block.id] = e.nativeEvent.selection; }} placeholder={block.type === 'heading' ? 'Бөлім атауы' : block.type === 'quote' ? 'Есте қалсын деген сөз…' : block.type === 'code' ? 'Код үзіндісі…' : block.type === 'checklist' ? 'Тапсырма…' : block.type === 'list' ? 'Тізім тармағы…' : 'Ойыңызды осы жерге жазыңыз…'} placeholderTextColor={theme.muted} multiline style={[styles.bodyInput, block.type === 'heading' ? styles.headingInput : null, block.type === 'quote' ? styles.quoteInput : null, block.type === 'code' ? styles.codeInput : null, block.type === 'list' ? styles.listInput : null, { color: block.checked ? theme.muted : theme.ink }]} accessibilityLabel={`${block.type} мәтіні`} />
               <TouchableOpacity onPress={() => deleteBlock(block.id)} style={styles.removeBlock} accessibilityLabel="Блокты өшіру"><Text style={{ color: '#B7AA9A', fontSize: 18 }}>×</Text></TouchableOpacity>
             </View>}
             {['paragraph', 'list', 'checklist', 'quote'].includes(block.type) && block.type !== 'checklist' ? <View style={styles.formatRow}><TouchableOpacity onPress={() => formatSelection(block, '**')}><Bold size={14} color={colors.muted} /></TouchableOpacity><TouchableOpacity onPress={() => formatSelection(block, '_')}><Italic size={14} color={colors.muted} /></TouchableOpacity><Text style={styles.formatHint}>Белгіленген мәтінді пішімдеу</Text></View> : null}

@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { ArrowLeft, BookHeart, BookOpen, CalendarCheck, Languages, Search as SearchIcon, X } from 'lucide-react-native';
 import { AppScreen, Card, colors } from '@/components/ui';
-import { searchAll } from '@/database/repository';
+import { searchAll } from '@/database/search';
 
 type Result = { kind: string; id: string; title: string; subtitle: string; date?: string; notebookId?: string };
 const icons: Record<string, typeof BookOpen> = { Жазба: BookHeart, Жоспар: CalendarCheck, Сөздік: Languages, Дәптер: BookOpen };

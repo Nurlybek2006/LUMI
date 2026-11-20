@@ -15,8 +15,12 @@ export default function StatisticsScreen() {
   const [monthDays, setMonthDays] = useState<string[]>([]);
   const refresh = useCallback(async () => {
     const [result, entries] = await Promise.all([getStats(db), listEntries(db)]);
-    setStats(result); setWordsWritten(entries.reduce((sum, entry) => sum + wordCount(entry.content), 0));
-    const all = await db.getAllAsync<{ event_date: string }>('SELECT event_date FROM activity_events WHERE event_date>=? GROUP BY event_date', addLocalDays(localDate(), -29));
+    setStats(result); setWordsWritten(entries.reduce((sum, entry) => sum + wordCount(`${entry.title} ${entry.content}`), 0));
+    const start = addLocalDays(localDate(), -29);
+    const all = await db.getAllAsync<{ event_date: string }>(`SELECT event_date FROM activity_events WHERE event_date>=?
+      UNION SELECT entry_date AS event_date FROM entries WHERE entry_date>=?
+      UNION SELECT task_date AS event_date FROM tasks WHERE task_date>=?
+      UNION SELECT reviewed_at AS event_date FROM vocabulary_reviews WHERE reviewed_at>=?`, start, start, start, start);
     setMonthDays(all.map((row) => row.event_date));
   }, [db]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));

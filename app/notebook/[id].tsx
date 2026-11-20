@@ -16,7 +16,7 @@ import type { Entry, Notebook, ThemeId } from '@/types/models';
 
 export default function NotebookReaderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const db = useSQLiteContext(); const { width, height } = useWindowDimensions();
+  const db = useSQLiteContext(); const { width, height, fontScale } = useWindowDimensions();
   const [book, setBook] = useState<Notebook | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [pages, setPages] = useState<RenderedBookPage[]>([]);
@@ -31,18 +31,30 @@ export default function NotebookReaderScreen() {
       getNotebook(db, id), listEntries(db, id), readSetting(db, `reading:${id}`), AccessibilityInfo.isReduceMotionEnabled(), readSetting(db, 'reduced_motion')
     ]);
     setBook(notebook); setEntries(allEntries); setReducedMotion(systemReduce || motionSetting === 'true');
-    const calculated = allEntries.flatMap((entry) => paginateEntry(entry, Math.max(290, width - 76), Math.max(480, height - 245), notebook?.themeId ?? 'warm'));
+    const calculated = allEntries.flatMap((entry) => paginateEntry(entry, Math.max(290, width - 76), Math.max(480, height - 245), notebook?.themeId ?? 'warm', fontScale));
     setPages(calculated);
-    const restoreAt = Math.min(calculated.length - 1, Math.max(0, Number(rememberedPage ?? 0)));
+    let rememberedIndex = Number(rememberedPage ?? 0);
+    if (rememberedPage) {
+      try {
+        const location = JSON.parse(rememberedPage) as { entryId?: string; segment?: number };
+        const matchingPage = calculated.findIndex((page) => page.entry.id === location.entryId && page.segment === location.segment);
+        if (matchingPage >= 0) rememberedIndex = matchingPage;
+      } catch { /* Keep the numeric page index saved by older app versions. */ }
+    }
+    const restoreAt = Math.min(calculated.length - 1, Math.max(0, rememberedIndex));
     setPageIndex(calculated.length ? restoreAt : 0);
-  }, [db, height, id, width]);
+  }, [db, fontScale, height, id, width]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
 
   useEffect(() => {
     if (!book || !pages.length) return;
-    const timer = setTimeout(() => void writeSetting(db, `reading:${id}`, String(pageIndex)), 150);
+    const timer = setTimeout(() => {
+      const page = pages[pageIndex];
+      const location = page ? JSON.stringify({ entryId: page.entry.id, segment: page.segment }) : String(pageIndex);
+      void writeSetting(db, `reading:${id}`, location);
+    }, 150);
     return () => clearTimeout(timer);
-  }, [book, db, id, pageIndex, pages.length]);
+  }, [book, db, id, pageIndex, pages]);
 
   const onPage = (direction: number) => {
     const next = Math.min(pages.length - 1, Math.max(0, pageIndex + direction));
