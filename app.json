@@ -5,16 +5,54 @@
     "scheme": "lumi",
     "version": "1.0.0",
     "orientation": "portrait",
-    "android": { "softwareKeyboardLayoutMode": "resize", "package": "app.lumi.journal", "allowBackup": false },
-    "newArchEnabled": true,
+    "android": {
+      "softwareKeyboardLayoutMode": "resize",
+      "package": "app.lumi.journal",
+      "allowBackup": false
+    },
     "plugins": [
       "expo-router",
-      ["expo-sqlite", { "useSQLCipher": false }],
-      ["expo-secure-store", { "configureAndroidBackup": true }],
-      ["expo-image-picker", { "photosPermission": "LUMI суреттерді күнделікке қосу үшін қол жеткізуді сұрайды." }],
-      ["expo-notifications", { "enableRemoteNotifications": false }]
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": false
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "LUMI суреттерді күнделікке қосу үшін қол жеткізуді сұрайды."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "enableRemoteNotifications": false
+        }
+      ]
     ],
-    "ios": { "bundleIdentifier": "app.lumi.journal", "supportsTablet": true },
-    "experiments": { "typedRoutes": true }
+    "ios": {
+      "bundleIdentifier": "app.lumi.journal",
+      "supportsTablet": true
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "8d58090e-6c66-45cc-8f9f-9c998d677265"
+      }
+    }
   }
 }
