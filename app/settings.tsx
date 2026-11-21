@@ -11,6 +11,7 @@ import { readSetting, writeSetting } from '@/database/settings';
 import { themes, themeIds } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
 import { setPin, removePin, hasPin, setBiometricEnabled } from '@/services/security';
+import { DEFAULT_AUTO_LOCK_MINUTES } from '@/services/lockPolicy';
 import { useSession } from '@/store/session';
 import { exportBackup, importBackup } from '@/services/backup';
 import { scheduleDailyReminder } from '@/services/notifications';
@@ -20,7 +21,7 @@ export default function SettingsScreen() {
   const db = useSQLiteContext();
   const [pinOn, setPinOn] = useState(false);
   const [biometrics, setBiometrics] = useState(false);
-  const [autoLock, setAutoLock] = useState('0');
+  const [autoLock, setAutoLock] = useState(String(DEFAULT_AUTO_LOCK_MINUTES));
   const [defaultTheme, setDefaultTheme] = useState<ThemeId>('warm');
   const [reducedMotion, setReducedMotion] = useState(false);
   const [reminder, setReminder] = useState(false);
@@ -34,7 +35,7 @@ export default function SettingsScreen() {
     const [pinConfigured, lockDelay, selectedTheme, motion, reminderOn, bioEnabled] = await Promise.all([
       hasPin(), readSetting(db, 'auto_lock_minutes'), readSetting(db, 'default_theme'), readSetting(db, 'reduced_motion'), readSetting(db, 'local_reminder'), import('@/services/security').then((module) => module.biometricEnabled())
     ]);
-    setPinOn(pinConfigured); setAutoLock(lockDelay ?? '0'); setDefaultTheme((selectedTheme as ThemeId) || 'warm'); setReducedMotion(motion === 'true'); setReminder(reminderOn === 'true'); setBiometrics(bioEnabled);
+    setPinOn(pinConfigured); setAutoLock(lockDelay ?? String(DEFAULT_AUTO_LOCK_MINUTES)); setDefaultTheme((selectedTheme as ThemeId) || 'warm'); setReducedMotion(motion === 'true'); setReminder(reminderOn === 'true'); setBiometrics(bioEnabled);
     const mediaDir = new Directory(Paths.document, 'media'); setStorageSize(mediaDir.size ?? 0);
   }, [db]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));

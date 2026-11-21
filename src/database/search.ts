@@ -3,32 +3,112 @@ import type * as SQLite from 'expo-sqlite';
 export type SearchKind = 'entry' | 'page' | 'task' | 'word' | 'notebook';
 export interface SearchResult { kind: SearchKind; id: string; title: string; subtitle: string; date?: string; notebookId?: string }
 
-export async function searchAll(db: SQLite.SQLiteDatabase, query: string): Promise<SearchResult[]> {
-  const normalized = query.trim();
-  if (!normalized) return [];
-  const pattern = `%${normalized}%`;
-  const ftsEnabled = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key='fts5_available'");
-  if (ftsEnabled?.value === 'true') {
-    try {
-      const phrase = `"${normalized.replaceAll('"', '""')}"`;
-      const hits = await db.getAllAsync<{ kind: SearchKind; object_id: string; title: string; body: string; event_date: string; notebook_id: string }>(`SELECT kind,object_id,title,body,event_date,notebook_id FROM content_fts
-        WHERE content_fts MATCH ? AND (kind<>'entry' OR EXISTS(SELECT 1 FROM notebooks n WHERE n.id=content_fts.notebook_id AND n.type='journal')) ORDER BY rank LIMIT 60`, phrase);
-      return hits.map((row) => ({ kind: row.kind, id: row.object_id, title: row.title || row.event_date || row.body, subtitle: row.kind === 'entry' || row.kind === 'page' ? row.body.slice(0, 92) : row.kind === 'task' ? row.event_date : row.body, ...(row.event_date ? { date: row.event_date } : {}), ...(row.notebook_id ? { notebookId: row.notebook_id } : {}) }));
-    } catch { /* Индекс қолжетімсіз болса, SQL іздеуін қолданамыз. */ }
+type IndexedRow = { kind: SearchKind; id: string; notebook_id: string | null; title: string; body: string; date: string | null };
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/gu, '\\$&');
+}
+
+function shortQueryVariants(query: string): string[] {
+  const characters = Array.from(query);
+  if (characters.length > 6) return [...new Set([query, query.toLowerCase(), query.toUpperCase()])];
+  let variants = [''];
+  for (const character of characters) {
+    const choices = [...new Set([character, character.toLowerCase(), character.toUpperCase()])];
+    variants = variants.flatMap((prefix) => choices.map((choice) => prefix + choice)).slice(0, 128);
   }
-  const [entries, pages, tasks, words, notebooks] = await Promise.all([
-    db.getAllAsync<{ id: string; notebook_id: string; title: string; content: string; entry_date: string }>(`SELECT e.id,e.notebook_id,e.title,e.content,e.entry_date FROM entries e JOIN notebooks n ON n.id=e.notebook_id
-      WHERE n.type='journal' AND (e.title LIKE ? OR e.content LIKE ?) ORDER BY e.entry_date DESC LIMIT 30`, pattern, pattern),
-    db.getAllAsync<{ id: string; notebook_id: string; title: string; content: string }>('SELECT id,notebook_id,title,content FROM notebook_pages WHERE title LIKE ? OR content LIKE ? ORDER BY updated_at DESC LIMIT 30', pattern, pattern),
-    db.getAllAsync<{ id: string; title: string; task_date: string; notebook_id: string | null }>('SELECT id,title,task_date,notebook_id FROM tasks WHERE title LIKE ? ORDER BY task_date DESC LIMIT 20', pattern),
-    db.getAllAsync<{ id: string; source: string; translation: string; notebook_id: string | null }>(`SELECT DISTINCT w.id,w.source,w.translation,ve.notebook_id FROM vocabulary_words w LEFT JOIN vocabulary_entries ve ON ve.id=w.id LEFT JOIN vocabulary_translations vt ON vt.entry_id=w.id WHERE w.source LIKE ? OR w.translation LIKE ? OR vt.value LIKE ? LIMIT 20`, pattern, pattern, pattern),
-    db.getAllAsync<{ id: string; title: string; theme_id: string }>('SELECT id,title,theme_id FROM notebooks WHERE title LIKE ? LIMIT 20', pattern)
-  ]);
-  return [
-    ...entries.map((row): SearchResult => ({ kind: 'entry', id: row.id, title: row.title || row.entry_date, subtitle: row.content.slice(0, 92), date: row.entry_date, notebookId: row.notebook_id })),
-    ...pages.map((row): SearchResult => ({ kind: 'page', id: row.id, title: row.title || 'Атаусыз бет', subtitle: row.content.slice(0, 92), notebookId: row.notebook_id })),
-    ...tasks.map((row): SearchResult => ({ kind: 'task', id: row.id, title: row.title, subtitle: row.task_date, date: row.task_date, ...(row.notebook_id ? { notebookId: row.notebook_id } : {}) })),
-    ...words.map((row): SearchResult => ({ kind: 'word', id: row.id, title: row.source, subtitle: row.translation, ...(row.notebook_id ? { notebookId: row.notebook_id } : {}) })),
-    ...notebooks.map((row): SearchResult => ({ kind: 'notebook', id: row.id, title: row.title, subtitle: row.theme_id }))
+  return [...new Set(variants)];
+}
+
+function contextAround(text: string, query: string): string {
+  const normalizedText = text.normalize('NFKC').toLowerCase();
+  const normalizedQuery = query.normalize('NFKC').toLowerCase();
+  const index = normalizedText.indexOf(normalizedQuery);
+  if (index < 0) return Array.from(text).slice(0, 104).join('');
+  const start = Math.max(0, index - 38);
+  const excerpt = Array.from(text).slice(start, index + Array.from(query).length + 62).join('');
+  return `${start > 0 ? '…' : ''}${excerpt}${start + Array.from(excerpt).length < Array.from(text).length ? '…' : ''}`;
+}
+
+function toResult(row: IndexedRow, query: string): SearchResult {
+  const title = row.title || row.date || row.body || 'Атаусыз жазба';
+  const subtitle = row.kind === 'task' ? (row.date ?? '')
+    : row.kind === 'notebook' ? row.body
+      : contextAround(row.body, query);
+  return {
+    kind: row.kind,
+    id: row.id,
+    title,
+    subtitle,
+    ...(row.date ? { date: row.date } : {}),
+    ...(row.notebook_id ? { notebookId: row.notebook_id } : row.kind === 'notebook' ? { notebookId: row.id } : {})
+  };
+}
+
+async function searchWithTrigram(db: SQLite.SQLiteDatabase, query: string): Promise<IndexedRow[]> {
+  const match = `"${query.replaceAll('"', '""')}"`;
+  const queries = [
+    db.getAllAsync<IndexedRow>(`SELECT 'entry' AS kind,e.id,e.notebook_id,e.title,e.content AS body,e.entry_date AS date
+      FROM content_substring_fts f JOIN entries e ON e.id=f.object_id JOIN notebooks n ON n.id=e.notebook_id
+      WHERE f.kind='entry' AND content_substring_fts MATCH ? AND n.type='journal' ORDER BY e.entry_date DESC LIMIT 30`, match),
+    db.getAllAsync<IndexedRow>(`SELECT 'page' AS kind,p.id,p.notebook_id,p.title,p.content AS body,NULL AS date
+      FROM content_substring_fts f JOIN notebook_pages p ON p.id=f.object_id
+      WHERE f.kind='page' AND content_substring_fts MATCH ? ORDER BY p.updated_at DESC LIMIT 30`, match),
+    db.getAllAsync<IndexedRow>(`SELECT 'task' AS kind,t.id,t.notebook_id,t.title,'' AS body,t.task_date AS date
+      FROM content_substring_fts f JOIN tasks t ON t.id=f.object_id
+      WHERE f.kind='task' AND content_substring_fts MATCH ? ORDER BY t.task_date DESC LIMIT 20`, match),
+    db.getAllAsync<IndexedRow>(`SELECT 'word' AS kind,w.id,ve.notebook_id,w.source AS title,
+        COALESCE((SELECT group_concat(value,' · ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) AS body,NULL AS date
+      FROM content_substring_fts f JOIN vocabulary_words w ON w.id=f.object_id LEFT JOIN vocabulary_entries ve ON ve.id=w.id
+      WHERE f.kind='word' AND content_substring_fts MATCH ? LIMIT 30`, match),
+    db.getAllAsync<IndexedRow>(`SELECT 'notebook' AS kind,n.id,n.id AS notebook_id,n.title,'' AS body,NULL AS date
+      FROM content_substring_fts f JOIN notebooks n ON n.id=f.object_id
+      WHERE f.kind='notebook' AND content_substring_fts MATCH ? LIMIT 20`, match)
   ];
+  return (await Promise.all(queries)).flat();
+}
+
+async function searchWithLike(db: SQLite.SQLiteDatabase, query: string): Promise<IndexedRow[]> {
+  const variants = shortQueryVariants(query);
+  const condition = (columns: string[]) => {
+    const clauses = variants.flatMap(() => columns.map((column) => `${column} LIKE ? ESCAPE char(92)`)).join(' OR ');
+    const params = variants.flatMap((variant) => columns.map(() => `%${escapeLike(variant)}%`));
+    return { sql: `(${clauses})`, params };
+  };
+  const entry = condition(['e.title', 'e.content']);
+  const page = condition(['p.title', 'p.content']);
+  const task = condition(['t.title', 't.task_date']);
+  const word = condition(['w.source', 'w.translation', 'COALESCE(vt.value,\'\')']);
+  const notebook = condition(['n.title']);
+  const results = await Promise.all([
+    db.getAllAsync<IndexedRow>(`SELECT 'entry' AS kind,e.id,e.notebook_id,e.title,e.content AS body,e.entry_date AS date FROM entries e JOIN notebooks n ON n.id=e.notebook_id WHERE n.type='journal' AND ${entry.sql} ORDER BY e.entry_date DESC LIMIT 30`, ...entry.params),
+    db.getAllAsync<IndexedRow>(`SELECT 'page' AS kind,p.id,p.notebook_id,p.title,p.content AS body,NULL AS date FROM notebook_pages p WHERE ${page.sql} ORDER BY p.updated_at DESC LIMIT 30`, ...page.params),
+    db.getAllAsync<IndexedRow>(`SELECT 'task' AS kind,t.id,t.notebook_id,t.title,'' AS body,t.task_date AS date FROM tasks t WHERE ${task.sql} ORDER BY t.task_date DESC LIMIT 20`, ...task.params),
+    db.getAllAsync<IndexedRow>(`SELECT DISTINCT 'word' AS kind,w.id,ve.notebook_id,w.source AS title,
+        COALESCE((SELECT group_concat(value,' · ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) AS body,NULL AS date
+      FROM vocabulary_words w LEFT JOIN vocabulary_entries ve ON ve.id=w.id LEFT JOIN vocabulary_translations vt ON vt.entry_id=w.id WHERE ${word.sql} LIMIT 30`, ...word.params),
+    db.getAllAsync<IndexedRow>(`SELECT 'notebook' AS kind,n.id,n.id AS notebook_id,n.title,'' AS body,NULL AS date FROM notebooks n WHERE ${notebook.sql} LIMIT 20`, ...notebook.params)
+  ]);
+  return results.flat();
+}
+
+export async function searchAll(db: SQLite.SQLiteDatabase, query: string): Promise<SearchResult[]> {
+  const normalized = query.normalize('NFKC').trim();
+  if (!normalized) return [];
+  let rows: IndexedRow[];
+  const codePoints = Array.from(normalized).length;
+  const substringAvailable = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key='substring_fts_available'");
+  if (substringAvailable?.value === 'true' && codePoints >= 3) {
+    try {
+      rows = await searchWithTrigram(db, normalized);
+      if (!rows.length) rows = await searchWithLike(db, normalized);
+    } catch {
+      rows = await searchWithLike(db, normalized);
+    }
+  } else {
+    rows = await searchWithLike(db, normalized);
+  }
+  const unique = new Map<string, SearchResult>();
+  for (const row of rows) unique.set(`${row.kind}:${row.id}`, toResult(row, normalized));
+  return [...unique.values()];
 }

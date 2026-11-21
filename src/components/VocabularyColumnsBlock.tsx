@@ -3,14 +3,14 @@ import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react-native';
 import type { EntryBlock } from '@/types/models';
 import { colors } from '@/components/ui';
 
-const labels: Record<string, string> = { kk: 'Қазақша', ru: 'Русский', en: 'English' };
+const labels: Record<string, string> = { kk: 'Қазақша', ru: 'Орысша', en: 'Ағылшынша' };
 type Column = NonNullable<EntryBlock['columns']>[number];
 
 export function VocabularyColumnsBlock({ block, editable, onChange }: { block: EntryBlock; editable: boolean; onChange?: (next: EntryBlock) => void }) {
   const columns = block.columns?.length ? block.columns : [
     { languageCode: 'kk', title: 'Қазақша', cells: [''] },
-    { languageCode: 'ru', title: 'Русский', cells: [''] },
-    { languageCode: 'en', title: 'English', cells: [''] }
+    { languageCode: 'ru', title: 'Орысша', cells: [''] },
+    { languageCode: 'en', title: 'Ағылшынша', cells: [''] }
   ];
   const update = (next: Column[]) => onChange?.({ ...block, columns: next });
   const setCell = (columnIndex: number, rowIndex: number, value: string) => update(columns.map((column, index) => index !== columnIndex ? column : { ...column, cells: column.cells.map((cell, cellIndex) => cellIndex === rowIndex ? value : cell) }));

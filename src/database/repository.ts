@@ -206,21 +206,42 @@ export async function saveWord(db: SQLite.SQLiteDatabase, input: Partial<Vocabul
   for (let index = 0; index < pair.length; index += 1) { const item = pair[index]!; await db.runAsync('INSERT INTO vocabulary_translations(id,entry_id,language_code,value,display_order) VALUES(?,?,?,?,?)', `${wordId}:legacy:${item.languageCode}`, wordId, item.languageCode, item.value, index); }
   });
 }
-export async function saveMultilingualWord(db: SQLite.SQLiteDatabase, input: { id?: string; notebookId: string; translations: { languageCode: string; value: string }[]; example?: string; exampleTranslation?: string; notes?: string; tags?: string[]; favorite?: boolean; learned?: boolean; repetitions?: number; nextReview?: string; createdAt?: string }): Promise<string> {
-  const clean = input.translations.map((item) => ({ languageCode: item.languageCode.trim().toLowerCase(), value: item.value.trim() })).filter((item) => item.languageCode && item.value);
+export async function saveMultilingualWord(db: SQLite.SQLiteDatabase, input: { id?: string; notebookId?: string; translations: { id?: string; languageCode: string; value: string }[]; example?: string; exampleTranslation?: string; notes?: string; tags?: string[]; favorite?: boolean; learned?: boolean; repetitions?: number; nextReview?: string; createdAt?: string }): Promise<string> {
+  const clean = input.translations.map((item) => ({ ...(item.id ? { id: item.id } : {}), languageCode: item.languageCode.trim().normalize('NFKC').toLowerCase(), value: item.value.trim() })).filter((item) => item.languageCode && item.value);
   if (clean.length < 2) throw new Error('Кемінде екі тілдегі сөзді енгізіңіз.');
   if (new Set(clean.map((item) => item.languageCode)).size !== clean.length) throw new Error('Әр тіл бір рет қана көрсетілуі керек.');
   const wordId = input.id ?? id(); const timestamp = now(); const date = localDate(); const first = clean[0]!; const second = clean[1]!;
   await db.withTransactionAsync(async () => {
+    const existing = await db.getFirstAsync<{ example: string; example_translation: string; notes: string; favorite: number; learned: number; repetitions: number; next_review: string; created_at: string; notebook_id: string | null; tags_json: string }>(
+      `SELECT w.example,w.example_translation,w.notes,w.favorite,w.learned,w.repetitions,w.next_review,w.created_at,ve.notebook_id,ve.tags_json
+       FROM vocabulary_words w LEFT JOIN vocabulary_entries ve ON ve.id=w.id WHERE w.id=?`, wordId);
+    const existingTranslations = await db.getAllAsync<{ id: string; language_code: string }>('SELECT id,language_code FROM vocabulary_translations WHERE entry_id=?', wordId);
+    const existingByLanguage = new Map(existingTranslations.map((item) => [item.language_code, item.id]));
+    const example = input.example ?? existing?.example ?? '';
+    const exampleTranslation = input.exampleTranslation ?? existing?.example_translation ?? '';
+    const notes = input.notes ?? existing?.notes ?? '';
+    const favorite = input.favorite ?? Boolean(existing?.favorite);
+    const learned = input.learned ?? Boolean(existing?.learned);
+    const repetitions = input.repetitions ?? existing?.repetitions ?? 0;
+    const nextReview = input.nextReview ?? existing?.next_review ?? date;
+    const createdAt = input.createdAt ?? existing?.created_at ?? timestamp;
+    const notebookId = input.notebookId ?? existing?.notebook_id ?? null;
+    const tags = input.tags ?? (existing?.tags_json ? JSON.parse(existing.tags_json) as string[] : []);
     await db.runAsync(`INSERT INTO vocabulary_words(id,source,translation,source_language,target_language,example,example_translation,notes,favorite,learned,repetitions,next_review,created_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source=excluded.source,translation=excluded.translation,source_language=excluded.source_language,
       target_language=excluded.target_language,example=excluded.example,example_translation=excluded.example_translation,notes=excluded.notes,favorite=excluded.favorite,learned=excluded.learned`,
-      wordId, first.value, second.value, first.languageCode, second.languageCode, input.example ?? '', input.exampleTranslation ?? '', input.notes ?? '', input.favorite ? 1 : 0, input.learned ? 1 : 0, input.repetitions ?? 0, input.nextReview ?? date, input.createdAt ?? timestamp);
+      wordId, first.value, second.value, first.languageCode, second.languageCode, example, exampleTranslation, notes, favorite ? 1 : 0, learned ? 1 : 0, repetitions, nextReview, createdAt);
     await db.runAsync(`INSERT INTO vocabulary_entries(id,notebook_id,example,example_translation,notes,tags_json,favorite,learned,repetitions,next_review,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET notebook_id=excluded.notebook_id,example=excluded.example,example_translation=excluded.example_translation,
-      notes=excluded.notes,tags_json=excluded.tags_json,favorite=excluded.favorite,learned=excluded.learned,updated_at=excluded.updated_at`, wordId, input.notebookId, input.example ?? '', input.exampleTranslation ?? '', input.notes ?? '', JSON.stringify(input.tags ?? []), input.favorite ? 1 : 0, input.learned ? 1 : 0, input.repetitions ?? 0, input.nextReview ?? date, input.createdAt ?? timestamp, timestamp);
-    await db.runAsync('DELETE FROM vocabulary_translations WHERE entry_id=?', wordId);
-    for (let index = 0; index < clean.length; index += 1) { const item = clean[index]!; await db.runAsync('INSERT INTO vocabulary_translations(id,entry_id,language_code,value,display_order) VALUES(?,?,?,?,?)', `${wordId}:lang:${item.languageCode}`, wordId, item.languageCode, item.value, index); }
+      notes=excluded.notes,tags_json=excluded.tags_json,favorite=excluded.favorite,learned=excluded.learned,updated_at=excluded.updated_at`, wordId, notebookId, example, exampleTranslation, notes, JSON.stringify(tags), favorite ? 1 : 0, learned ? 1 : 0, repetitions, nextReview, createdAt, timestamp);
+    const retainedLanguages = new Set(clean.map((item) => item.languageCode));
+    for (const item of existingTranslations) if (!retainedLanguages.has(item.language_code)) await db.runAsync('DELETE FROM vocabulary_translations WHERE id=?', item.id);
+    for (let index = 0; index < clean.length; index += 1) {
+      const item = clean[index]!;
+      const translationId = existingByLanguage.get(item.languageCode) ?? item.id ?? `${wordId}:lang:${item.languageCode}`;
+      await db.runAsync(`INSERT INTO vocabulary_translations(id,entry_id,language_code,value,display_order) VALUES(?,?,?,?,?)
+        ON CONFLICT(entry_id,language_code) DO UPDATE SET value=excluded.value,display_order=excluded.display_order`, translationId, wordId, item.languageCode, item.value, index);
+    }
   });
   return wordId;
 }

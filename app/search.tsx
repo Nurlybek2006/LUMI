@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -15,8 +15,21 @@ export default function SearchScreen() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Result[]>([]);
   const [searching, setSearching] = useState(false);
+  const requestSequence = useRef(0);
   useEffect(() => {
-    const timer = setTimeout(() => { setSearching(Boolean(query.trim())); void searchAll(db, query).then(setResults).finally(() => setSearching(false)); }, 180);
+    const requestId = ++requestSequence.current;
+    const normalized = query.trim();
+    const timer = setTimeout(() => {
+      if (!normalized) { setResults([]); setSearching(false); return; }
+      setSearching(true);
+      void searchAll(db, normalized).then((nextResults) => {
+        if (requestSequence.current === requestId) setResults(nextResults);
+      }).catch(() => {
+        if (requestSequence.current === requestId) setResults([]);
+      }).finally(() => {
+        if (requestSequence.current === requestId) setSearching(false);
+      });
+    }, normalized ? 180 : 0);
     return () => clearTimeout(timer);
   }, [db, query]);
   const openResult = (item: Result) => {

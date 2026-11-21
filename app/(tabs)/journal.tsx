@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, Bold, CalendarDays, CheckSquare, Code2, Heading2
 import { AppScreen, TextField, colors } from '@/components/ui';
 import { deleteEntry, getEntry, listNotebooks, saveEntry } from '@/database/repository';
 import { SaveQueue } from '@/services/autosave';
+import { withExternalActivity } from '@/services/externalActivity';
 import { mediaUri, pruneUnusedMedia, storeImage } from '@/services/media';
 import { addLocalDays, localDate } from '@/utils/core';
 import { getTheme } from '@/themes/registry';
@@ -40,6 +41,7 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
   const [saveState, setSaveState] = useState('');
   const [entryId, setEntryId] = useState<string | null>(null);
   const queueRef = useRef<SaveQueue<SavePayload> | null>(null);
+  const loadSequence = useRef(0);
   const latestPayload = useRef<SavePayload | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRefs = useRef<Record<string, TextInputInstance | null>>({});
@@ -56,12 +58,15 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
   const reportSaveFailure = useCallback((error: unknown) => setSaveState(error instanceof Error ? `Сақтау қатесі: ${error.message}` : 'Сақтау қатесі'), []);
 
   const load = useCallback(async (newDate: string) => {
+    const requestId = ++loadSequence.current;
     const books = await listNotebooks(db);
+    if (requestId !== loadSequence.current) return;
     const chosen = books.find((item) => item.id === requestedNotebookId) ?? books.find((item) => item.id === 'diary') ?? books[0];
     if (!chosen) { setLoaded(true); return; }
     setNotebookId(chosen.id);
     setThemeId(chosen.themeId);
     const entry = await getEntry(db, chosen.id, newDate);
+    if (requestId !== loadSequence.current) return;
     setTitle(entry?.title ?? ''); setMood(entry?.mood ?? null); setTagsText(entry?.tags.join(', ') ?? '');
     setBlocks(entry?.blocks.length ? entry.blocks : [{ id: randomUUID(), type: 'paragraph', text: '' }]);
     setEntryId(entry?.id ?? null); setLoaded(true); setSaveState(entry ? 'Сақталды' : 'Жаңа жазба');
@@ -69,7 +74,7 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
 
   // Rehydrate the selected entry from SQLite whenever the user changes journal dates.
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(date); }, [date, load]);
+  useEffect(() => { void load(date); return () => { loadSequence.current += 1; }; }, [date, load]);
   useEffect(() => {
     if (!loaded) return;
     const payload: SavePayload = { notebookId, date, title, content: blocks.map((item) => item.text ?? '').join('\n'), blocks, mood, tags: tagsText.split(',').map((tag) => tag.trim()).filter(Boolean) };
@@ -101,7 +106,7 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
   const deleteBlock = (id: string) => setBlocks((items) => items.length > 1 ? items.filter((block) => block.id !== id) : [{ id: randomUUID(), type: 'paragraph', text: '' }]);
 
   const addImage = async () => {
-    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 0.85 });
+    const picked = await withExternalActivity(() => ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 0.85 }));
     const asset = picked.canceled ? null : picked.assets[0];
     if (!asset) return;
     try { const relativePath = await storeImage(asset.uri); setBlocks((items) => [...items, { id: randomUUID(), type: 'image', uri: relativePath }]); }

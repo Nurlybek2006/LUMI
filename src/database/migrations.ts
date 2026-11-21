@@ -137,6 +137,7 @@ export async function migrateDatabase(db: SQLite.SQLiteDatabase): Promise<void> 
       await db.execAsync(`PRAGMA user_version = ${migration.version}`);
     });
   }
+  await db.runAsync("INSERT OR IGNORE INTO app_settings(key,value) VALUES('auto_lock_minutes','1')");
   const found = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM notebooks');
   const seeded = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key='defaults_seeded'");
   if ((found?.count ?? 0) === 0 && seeded?.value !== 'true') {
@@ -209,5 +210,55 @@ export async function migrateDatabase(db: SQLite.SQLiteDatabase): Promise<void> 
     await db.runAsync("INSERT OR REPLACE INTO app_settings(key,value) VALUES('fts5_available','true')");
   } catch {
     await db.runAsync("INSERT OR REPLACE INTO app_settings(key,value) VALUES('fts5_available','false')");
+  }
+  try {
+    await db.execAsync(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS content_substring_fts USING fts5(kind UNINDEXED, object_id UNINDEXED, searchable, tokenize='trigram');
+      CREATE TRIGGER IF NOT EXISTS substring_entries_insert AFTER INSERT ON entries BEGIN INSERT INTO content_substring_fts VALUES('entry',new.id,new.title || ' ' || new.content); END;
+      CREATE TRIGGER IF NOT EXISTS substring_entries_update AFTER UPDATE ON entries BEGIN DELETE FROM content_substring_fts WHERE kind='entry' AND object_id=old.id; INSERT INTO content_substring_fts VALUES('entry',new.id,new.title || ' ' || new.content); END;
+      CREATE TRIGGER IF NOT EXISTS substring_entries_delete AFTER DELETE ON entries BEGIN DELETE FROM content_substring_fts WHERE kind='entry' AND object_id=old.id; END;
+      CREATE TRIGGER IF NOT EXISTS substring_pages_insert AFTER INSERT ON notebook_pages BEGIN INSERT INTO content_substring_fts VALUES('page',new.id,new.title || ' ' || new.content); END;
+      CREATE TRIGGER IF NOT EXISTS substring_pages_update AFTER UPDATE ON notebook_pages BEGIN DELETE FROM content_substring_fts WHERE kind='page' AND object_id=old.id; INSERT INTO content_substring_fts VALUES('page',new.id,new.title || ' ' || new.content); END;
+      CREATE TRIGGER IF NOT EXISTS substring_pages_delete AFTER DELETE ON notebook_pages BEGIN DELETE FROM content_substring_fts WHERE kind='page' AND object_id=old.id; END;
+      CREATE TRIGGER IF NOT EXISTS substring_tasks_insert AFTER INSERT ON tasks BEGIN INSERT INTO content_substring_fts VALUES('task',new.id,new.title || ' ' || new.task_date); END;
+      CREATE TRIGGER IF NOT EXISTS substring_tasks_update AFTER UPDATE ON tasks BEGIN DELETE FROM content_substring_fts WHERE kind='task' AND object_id=old.id; INSERT INTO content_substring_fts VALUES('task',new.id,new.title || ' ' || new.task_date); END;
+      CREATE TRIGGER IF NOT EXISTS substring_tasks_delete AFTER DELETE ON tasks BEGIN DELETE FROM content_substring_fts WHERE kind='task' AND object_id=old.id; END;
+      CREATE TRIGGER IF NOT EXISTS substring_notebooks_insert AFTER INSERT ON notebooks BEGIN INSERT INTO content_substring_fts VALUES('notebook',new.id,new.title); END;
+      CREATE TRIGGER IF NOT EXISTS substring_notebooks_update AFTER UPDATE ON notebooks BEGIN DELETE FROM content_substring_fts WHERE kind='notebook' AND object_id=old.id; INSERT INTO content_substring_fts VALUES('notebook',new.id,new.title); END;
+      CREATE TRIGGER IF NOT EXISTS substring_notebooks_delete AFTER DELETE ON notebooks BEGIN DELETE FROM content_substring_fts WHERE kind='notebook' AND object_id=old.id; END;
+      CREATE TRIGGER IF NOT EXISTS substring_words_insert AFTER INSERT ON vocabulary_words BEGIN
+        INSERT INTO content_substring_fts SELECT 'word',w.id,w.source || ' ' || COALESCE((SELECT group_concat(value,' ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) FROM vocabulary_words w WHERE w.id=new.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS substring_words_update AFTER UPDATE ON vocabulary_words BEGIN
+        DELETE FROM content_substring_fts WHERE kind='word' AND object_id=old.id;
+        INSERT INTO content_substring_fts SELECT 'word',w.id,w.source || ' ' || COALESCE((SELECT group_concat(value,' ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) FROM vocabulary_words w WHERE w.id=new.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS substring_words_delete AFTER DELETE ON vocabulary_words BEGIN DELETE FROM content_substring_fts WHERE kind='word' AND object_id=old.id; END;
+      CREATE TRIGGER IF NOT EXISTS substring_translations_insert AFTER INSERT ON vocabulary_translations BEGIN
+        DELETE FROM content_substring_fts WHERE kind='word' AND object_id=new.entry_id;
+        INSERT INTO content_substring_fts SELECT 'word',w.id,w.source || ' ' || COALESCE((SELECT group_concat(value,' ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) FROM vocabulary_words w WHERE w.id=new.entry_id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS substring_translations_update AFTER UPDATE ON vocabulary_translations BEGIN
+        DELETE FROM content_substring_fts WHERE kind='word' AND object_id=old.entry_id;
+        INSERT INTO content_substring_fts SELECT 'word',w.id,w.source || ' ' || COALESCE((SELECT group_concat(value,' ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) FROM vocabulary_words w WHERE w.id=new.entry_id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS substring_translations_delete AFTER DELETE ON vocabulary_translations BEGIN
+        DELETE FROM content_substring_fts WHERE kind='word' AND object_id=old.entry_id;
+        INSERT INTO content_substring_fts SELECT 'word',w.id,w.source || ' ' || COALESCE((SELECT group_concat(value,' ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) FROM vocabulary_words w WHERE w.id=old.entry_id;
+      END;
+    `);
+    const substringIndexed = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key='substring_fts_initialized'");
+    if (substringIndexed?.value !== 'true') {
+      await db.execAsync(`DELETE FROM content_substring_fts;
+        INSERT INTO content_substring_fts SELECT 'entry',e.id,e.title || ' ' || e.content FROM entries e JOIN notebooks n ON n.id=e.notebook_id WHERE n.type='journal';
+        INSERT INTO content_substring_fts SELECT 'page',id,title || ' ' || content FROM notebook_pages;
+        INSERT INTO content_substring_fts SELECT 'task',id,title || ' ' || task_date FROM tasks;
+        INSERT INTO content_substring_fts SELECT 'notebook',id,title FROM notebooks;
+        INSERT INTO content_substring_fts SELECT 'word',w.id,w.source || ' ' || COALESCE((SELECT group_concat(value,' ') FROM vocabulary_translations WHERE entry_id=w.id),w.translation) FROM vocabulary_words w;`);
+      await db.runAsync("INSERT OR REPLACE INTO app_settings(key,value) VALUES('substring_fts_initialized','true')");
+    }
+    await db.runAsync("INSERT OR REPLACE INTO app_settings(key,value) VALUES('substring_fts_available','true')");
+  } catch {
+    await db.runAsync("INSERT OR REPLACE INTO app_settings(key,value) VALUES('substring_fts_available','false')");
   }
 }

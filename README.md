@@ -10,7 +10,7 @@ LUMI is an offline-first Android journal and personal library built with Expo Ro
 - Vocabulary cards with examples, notes, favorites, language labels, import/export, and spaced review intervals of 1, 3, 7, 14, and 30 days.
 - Search across entries, tasks, notebooks, and vocabulary; SQLite FTS5 is used when available, with a local SQL fallback.
 - Writing streaks and usage statistics derived from local records.
-- Optional PIN lock, biometric unlock, automatic relock, and screen-capture prevention while the PIN is configured.
+- Optional PIN lock, biometric unlock, and configurable automatic relock. The app does not enable screen-capture prevention.
 - Portable `.lumibackup` archives containing the database tables and attached images, with checksums and guarded restore.
 
 ## Local data and privacy

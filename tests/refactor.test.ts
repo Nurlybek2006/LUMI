@@ -45,6 +45,10 @@ test('page deletion leaves its notebook, and vocabulary entries support ordered 
     const stampNow = stamp;
     db.prepare('INSERT INTO notebooks(id,title,icon,theme_id,sort_order,created_at,updated_at,type) VALUES(?,?,?,?,?,?,?,?)').run('general-book', 'Notes', 'book-open', 'warm', 0, stampNow, stampNow, 'general');
     db.prepare('INSERT INTO notebook_pages(id,notebook_id,title,content,blocks_json,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run('page-delete', 'general-book', 'Keep book', 'Body', '[]', 0, stampNow, stampNow);
+    const longContent = 'Қазақша ұзын мәтін · '.repeat(400);
+    db.prepare('INSERT INTO notebook_pages(id,notebook_id,title,content,blocks_json,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run('page-long', 'general-book', 'Long reading page', longContent, JSON.stringify([{ id: 'long-block', type: 'paragraph', text: longContent }]), 1, stampNow, stampNow);
+    assert.equal(db.prepare('SELECT length(content) AS count FROM notebook_pages WHERE id=?').get('page-long')?.count, longContent.length);
+    assert.equal(db.prepare('SELECT json_extract(blocks_json,\'$[0].text\') AS body FROM notebook_pages WHERE id=?').get('page-long')?.body, longContent);
     db.prepare('DELETE FROM notebook_pages WHERE id=?').run('page-delete');
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM notebooks WHERE id=?').get('general-book')?.count, 1);
 
@@ -90,5 +94,40 @@ test('full database initialization seeds typed notebooks and keeps FTS search ac
     assert.ok(pageHits.some((hit) => hit.kind === 'page' && hit.id === 'fts-page'));
     const wordHits = await searchAll(searchAdapter, 'moonstone search phrase');
     assert.ok(wordHits.some((hit) => hit.kind === 'word' && hit.id === 'fts-word' && hit.notebookId === 'vocabulary'));
+  } finally { raw.close(); }
+});
+
+test('substring search finds partial, internal, multilingual and Kazakh Cyrillic matches without treating LIKE markers as wildcards', async () => {
+  const raw = new DatabaseSync(':memory:'); raw.exec('PRAGMA foreign_keys=ON');
+  const adapter = {
+    async execAsync(sql: string) { raw.exec(sql); },
+    async runAsync(sql: string, ...params: (string | number | null)[]) { return raw.prepare(sql).run(...params); },
+    async getFirstAsync<T>(sql: string, ...params: (string | number | null)[]) { return raw.prepare(sql).get(...params) as T | undefined ?? null; },
+    async getAllAsync<T>(sql: string, ...params: (string | number | null)[]) { return raw.prepare(sql).all(...params) as T[]; },
+    async withTransactionAsync(task: () => Promise<void>) { raw.exec('BEGIN'); try { await task(); raw.exec('COMMIT'); } catch (error) { raw.exec('ROLLBACK'); throw error; } }
+  } as unknown as Parameters<typeof migrateDatabase>[0];
+  try {
+    await migrateDatabase(adapter);
+    assert.equal(raw.prepare("SELECT value FROM app_settings WHERE key='substring_fts_available'").get()?.value, 'true');
+    raw.prepare('INSERT INTO notebook_pages(id,notebook_id,title,content,blocks_json,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run('kazakh-page', 'programming', 'Тіл үйрену', 'кітапхана · яблоко · 100%_нақты белгі', '[]', 0, stamp, stamp);
+    raw.prepare('INSERT INTO vocabulary_words(id,source,translation,source_language,target_language,next_review,created_at) VALUES(?,?,?,?,?,?,?)')
+      .run('apple-word', 'apple', 'алма', 'en', 'kk', '2025-01-02', stamp);
+    raw.prepare('INSERT INTO vocabulary_entries(id,notebook_id,next_review,created_at,updated_at) VALUES(?,?,?,?,?)')
+      .run('apple-word', 'vocabulary', '2025-01-02', stamp, stamp);
+    raw.prepare('INSERT INTO vocabulary_translations(id,entry_id,language_code,value,display_order) VALUES(?,?,?,?,?)')
+      .run('apple-tr', 'apple-word', 'tr', 'elma', 2);
+    const searchAdapter = {
+      async getFirstAsync<T>(sql: string, ...params: string[]) { return raw.prepare(sql).get(...params) as T | undefined ?? null; },
+      async getAllAsync<T>(sql: string, ...params: string[]) { return raw.prepare(sql).all(...params) as T[]; }
+    } as unknown as Parameters<typeof searchAll>[0];
+    for (const [query, expectedId] of [['кі', 'kazakh-page'], ['КІ', 'kazakh-page'], ['кіт', 'kazakh-page'], ['тап', 'kazakh-page'], ['ТАП', 'kazakh-page'], ['ябл', 'kazakh-page'], ['app', 'apple-word'], ['elma', 'apple-word']] as const) {
+      const results = await searchAll(searchAdapter, query);
+      assert.ok(results.some((hit) => hit.id === expectedId), `query ${query} should match ${expectedId}`);
+    }
+    const escaped = await searchAll(searchAdapter, '%_');
+    assert.ok(escaped.some((hit) => hit.id === 'kazakh-page'));
+    const snippet = (await searchAll(searchAdapter, 'ябл'))[0]?.subtitle ?? '';
+    assert.ok(snippet.includes('ябл'), 'result context should include the matching part');
   } finally { raw.close(); }
 });

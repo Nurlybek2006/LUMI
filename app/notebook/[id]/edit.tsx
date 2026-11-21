@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp, Bold, CheckSquare, Code2, Heading1, Heading2, Headi
 import { AppScreen, colors } from '@/components/ui';
 import { getNotebook, getNotebookPage, saveNotebookPage } from '@/database/repository';
 import { SaveQueue } from '@/services/autosave';
+import { withExternalActivity } from '@/services/externalActivity';
 import { mediaUri, pruneUnusedMedia, storeImage } from '@/services/media';
 import { getTheme } from '@/themes/registry';
 import { VocabularyColumnsBlock } from '@/components/VocabularyColumnsBlock';
@@ -24,7 +25,7 @@ export default function GeneralNoteEditor() {
   const [title, setTitle] = useState('');
   const [blocks, setBlocks] = useState<EntryBlock[]>([blankBlock()]);
   const [loaded, setLoaded] = useState(false);
-  const [documentId, setDocumentId] = useState(pageId ?? '');
+  const [documentId] = useState(() => pageId ?? randomUUID());
   const [saveState, setSaveState] = useState('Өзгеріс сақталды');
   const [undoItems, setUndoItems] = useState<EntryBlock[][]>([]);
   const [redoItems, setRedoItems] = useState<EntryBlock[][]>([]);
@@ -52,7 +53,6 @@ export default function GeneralNoteEditor() {
       if (!active) return;
       setBook(notebook); setTitle(page?.title ?? '');
       const next = page?.blocks.length ? page.blocks : [blankBlock()]; setBlocks(next); blockRef.current = next;
-      setDocumentId(page?.id ?? pageId ?? randomUUID());
       setLoaded(true);
     })();
     return () => { active = false; void flush().catch(report); };
@@ -78,7 +78,7 @@ export default function GeneralNoteEditor() {
     const next = blockRef.current.map((block) => block.id === blockId ? { ...block, text } : block); blockRef.current = next; setBlocks(next);
   };
   const add = (type: EntryBlock['type'], level?: 1 | 2 | 3, ordered?: boolean) => {
-    const block: EntryBlock = { id: randomUUID(), type, ...(type !== 'image' ? { text: '' } : {}), ...(type === 'checklist' ? { checked: false } : {}), ...(type === 'heading' && level ? { level } : {}), ...(type === 'list' && ordered !== undefined ? { ordered } : {}), ...(type === 'vocabulary_columns' ? { columns: [{ languageCode: 'kk', title: 'Қазақша', cells: [''] }, { languageCode: 'ru', title: 'Русский', cells: [''] }, { languageCode: 'en', title: 'English', cells: [''] }] } : {}) };
+    const block: EntryBlock = { id: randomUUID(), type, ...(type !== 'image' ? { text: '' } : {}), ...(type === 'checklist' ? { checked: false } : {}), ...(type === 'heading' && level ? { level } : {}), ...(type === 'list' && ordered !== undefined ? { ordered } : {}), ...(type === 'vocabulary_columns' ? { columns: [{ languageCode: 'kk', title: 'Қазақша', cells: [''] }, { languageCode: 'ru', title: 'Орысша', cells: [''] }, { languageCode: 'en', title: 'Ағылшынша', cells: [''] }] } : {}) };
     changeBlocks((current) => [...current, block]);
     if (type !== 'image' && type !== 'vocabulary_columns') requestAnimationFrame(() => inputs.current[block.id]?.focus());
   };
@@ -99,7 +99,7 @@ export default function GeneralNoteEditor() {
     requestAnimationFrame(() => inputs.current[block.id]?.setNativeProps({ selection: selected ? { start, end: start + replacement.length } : { start: start + marker.length, end: start + marker.length } }));
   };
   const addImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 0.85 });
+    const result = await withExternalActivity(() => ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 0.85 }));
     if (result.canceled || !result.assets[0]) return;
     try { const uri = await storeImage(result.assets[0].uri); changeBlocks((current) => { const image: EntryBlock = { id: randomUUID(), type: 'image', uri }; const index = current.findIndex((block) => block.id === focusedBlockId); return index < 0 ? [...current, image] : [...current.slice(0, index + 1), image, ...current.slice(index + 1)]; }); }
     catch (error) { Alert.alert('Сурет қосылмады', error instanceof Error ? error.message : 'Қайталап көріңіз.'); }
@@ -107,6 +107,7 @@ export default function GeneralNoteEditor() {
   const done = async () => { try { if (timer.current) { clearTimeout(timer.current); timer.current = null; } await flush(); router.back(); } catch (error) { report(error); Alert.alert('Өзгеріс сақталмады', error instanceof Error ? error.message : 'Қайталап көріңіз.'); } };
   const theme = getTheme(book?.themeId ?? 'warm');
   const activeBlock = blocks.find((block) => block.id === focusedBlockId);
+  if (loaded && !book) return <AppScreen title="Дәптер табылмады" subtitle="Бұл дәптер өшірілген немесе сілтемесі жарамсыз." right={<TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')}><Text style={{ color: colors.accent }}>Артқа</Text></TouchableOpacity>} />;
   return <AppScreen title="Жазба редакторы" subtitle={saveState} themeId={book?.themeId ?? 'warm'} scroll={false} contentStyle={{ paddingHorizontal: 13, paddingBottom: 0 }} right={<TouchableOpacity onPress={() => void done()} style={styles.done}><Save size={16} color="#FFF9F1" /><Text style={styles.doneText}>Дайын</Text></TouchableOpacity>}>
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={8}>
       <View style={styles.toolbar}>
