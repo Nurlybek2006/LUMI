@@ -6,7 +6,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as Notifications from 'expo-notifications';
 import { Directory, Paths } from 'expo-file-system';
 import { BellRing, BookOpen, Check, Fingerprint, Languages, LockKeyhole, Moon, Palette, ShieldCheck, Smartphone, Upload, Download, X } from 'lucide-react-native';
-import { AppScreen, Card, PrimaryButton, TextField, colors } from '@/components/ui';
+import { AppScreen, Card, PrimaryButton, TextField, colors, useAppAppearance } from '@/components/ui';
 import { readSetting, writeSetting } from '@/database/settings';
 import { themes, themeIds } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
@@ -16,9 +16,12 @@ import { useSession } from '@/store/session';
 import { exportBackup, importBackup } from '@/services/backup';
 import { scheduleDailyReminder } from '@/services/notifications';
 import type { ReactNode } from 'react';
+import type { AppearanceMode } from '@/services/appearance';
 
 export default function SettingsScreen() {
   const db = useSQLiteContext();
+  const appearance = useAppAppearance();
+  const [pageAnimation, setPageAnimation] = useState('smooth');
   const [pinOn, setPinOn] = useState(false);
   const [biometrics, setBiometrics] = useState(false);
   const [autoLock, setAutoLock] = useState(String(DEFAULT_AUTO_LOCK_MINUTES));
@@ -32,10 +35,10 @@ export default function SettingsScreen() {
   const [working, setWorking] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [pinConfigured, lockDelay, selectedTheme, motion, reminderOn, bioEnabled] = await Promise.all([
-      hasPin(), readSetting(db, 'auto_lock_minutes'), readSetting(db, 'default_theme'), readSetting(db, 'reduced_motion'), readSetting(db, 'local_reminder'), import('@/services/security').then((module) => module.biometricEnabled())
+    const [pinConfigured, lockDelay, selectedTheme, motion, reminderOn, bioEnabled, animation] = await Promise.all([
+      hasPin(), readSetting(db, 'auto_lock_minutes'), readSetting(db, 'default_theme'), readSetting(db, 'reduced_motion'), readSetting(db, 'local_reminder'), import('@/services/security').then((module) => module.biometricEnabled()), readSetting(db, 'page_animation')
     ]);
-    setPinOn(pinConfigured); setAutoLock(lockDelay ?? String(DEFAULT_AUTO_LOCK_MINUTES)); setDefaultTheme((selectedTheme as ThemeId) || 'warm'); setReducedMotion(motion === 'true'); setReminder(reminderOn === 'true'); setBiometrics(bioEnabled);
+    setPinOn(pinConfigured); setAutoLock(lockDelay ?? String(DEFAULT_AUTO_LOCK_MINUTES)); setDefaultTheme((selectedTheme as ThemeId) || 'warm'); setReducedMotion(motion === 'true'); setReminder(reminderOn === 'true'); setBiometrics(bioEnabled); setPageAnimation(animation ?? 'smooth');
     const mediaDir = new Directory(Paths.document, 'media'); setStorageSize(mediaDir.size ?? 0);
   }, [db]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
@@ -94,6 +97,8 @@ export default function SettingsScreen() {
     <Card style={styles.privacyNote}><ShieldCheck size={17} color={colors.green} /><Text style={styles.privacyCopy}>PIN құрылғының қауіпсіз сақтауында тексеру кілті ретінде сақталады. PIN кіруді шектейді, бірақ SQLite дерекқорын шифрламайды. Сақтық көшірме де шифрланбаған файл болып шығады.</Text></Card>
 
     <Text style={styles.section}>Көрініс</Text><Card style={styles.settingsCard}>
+      <Text style={styles.settingTitle}>Қолданба көрінісі</Text><Text style={styles.settingSub}>Дәптердің жеке тақырыбы бөлек сақталады</Text><View style={styles.optionRow}>{([['light', 'Жарық'], ['dark', 'Қараңғы'], ['system', 'Жүйемен']] as [AppearanceMode, string][]).map(([value, label]) => <TouchableOpacity key={value} onPress={() => appearance.setMode(value)} style={[styles.option, appearance.mode === value ? styles.optionActive : null]}><Text style={[styles.optionText, appearance.mode === value ? styles.optionTextActive : null]}>{label}</Text></TouchableOpacity>)}</View>
+      <View style={styles.settingLine}><View style={styles.settingIcon}><BookOpen size={18} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.settingTitle}>Кітап анимациясы</Text><Text style={styles.settingSub}>Бет ауыстыру тәсілін таңдаңыз</Text><View style={styles.optionRow}>{([['realistic', 'Realistic — қолжетімсіз'], ['smooth', 'Жұмсақ'], ['slide', 'Сырғыту'], ['none', 'Өшіру']] as const).map(([value, label]) => <TouchableOpacity key={value} disabled={value === 'realistic'} onPress={() => { setPageAnimation(value); void writeSetting(db, 'page_animation', value); }} style={[styles.option, pageAnimation === value ? styles.optionActive : null, value === 'realistic' ? { opacity: 0.5 } : null]}><Text style={[styles.optionText, pageAnimation === value ? styles.optionTextActive : null]}>{label}</Text></TouchableOpacity>)}</View><Text style={styles.settingSub}>Парақты шынайы иіп бұратын қозғалтқыш әзірге іске асырылмаған.</Text></View></View>
       <View style={styles.settingLine}><View style={styles.settingIcon}><Palette size={18} color={colors.accent} /></View><View style={{ flex: 1 }}><Text style={styles.settingTitle}>Жаңа дәптер тақырыбы</Text><Text style={styles.settingSub}>Әр дәптерге кейін жеке тақырып таңдауға болады</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.themeList}>{themeIds.map((id) => <TouchableOpacity key={id} onPress={() => { setDefaultTheme(id); void writeSetting(db, 'default_theme', id); }} style={[styles.themeChoice, { backgroundColor: themes[id].cover, borderColor: defaultTheme === id ? themes[id].accent : 'transparent' }]}><Text style={styles.themeChoiceName}>{themes[id].name}</Text>{defaultTheme === id ? <Check size={14} color="#FFF" /> : null}</TouchableOpacity>)}</ScrollView></View></View>
       <View style={styles.settingLine}><View style={styles.settingIcon}><Moon size={18} color="#81709A" /></View><View style={{ flex: 1 }}><Text style={styles.settingTitle}>Оқу бетінің көрінісі</Text><Text style={styles.settingSub}>Әр дәптерге бөлек ашық немесе түнгі тақырып таңдаңыз</Text></View></View>
       <View style={styles.settingLine}><View style={styles.settingIcon}><Languages size={18} color="#81709A" /></View><View style={{ flex: 1 }}><Text style={styles.settingTitle}>Қолданба тілі</Text><Text style={styles.settingSub}>Қазақша интерфейс • орысша және ағылшынша аударма ресурстары әзірленген</Text></View></View>

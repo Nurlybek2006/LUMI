@@ -5,18 +5,21 @@ import { ArrowLeft, ChevronRight, Search } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { getTheme } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
+import { createContext, useContext } from 'react';
+import type { AppearanceMode, Palette } from '@/services/appearance';
 
 export const colors = { background: '#F7F3EC', paper: '#FFFCF7', ink: '#302820', muted: '#887C70', accent: '#A76B45', line: '#E8DED2', green: '#527A62', red: '#A84E43' };
+export const AppAppearanceContext = createContext<{ mode: AppearanceMode; palette: Palette; setMode: (mode: AppearanceMode) => void }>({ mode: 'system', palette: { background: colors.background, paper: colors.paper, elevated: '#FFF', ink: colors.ink, muted: colors.muted, accent: colors.accent, accentSoft: '#F0E5D8', line: colors.line, green: colors.green, red: colors.red, navigation: colors.paper, overlay: '#221B1680' }, setMode: () => undefined });
+export const useAppAppearance = () => useContext(AppAppearanceContext);
 
 export function AppScreen({ children, title, subtitle, themeId = 'warm', scroll = true, right, contentStyle }: PropsWithChildren<{ title?: string; subtitle?: string; themeId?: ThemeId; scroll?: boolean; right?: ReactNode; contentStyle?: ViewStyle }>) {
   const router = useRouter(); const theme = getTheme(themeId);
   const body = <View style={[styles.content, contentStyle]}>{children}</View>;
-  return <SafeAreaView style={[styles.safe, { backgroundColor: theme.page }]} edges={['top', 'left', 'right']}>
-    {(title || right) && <View style={[styles.header, { backgroundColor: theme.page }]}>
-      <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} style={styles.back} accessibilityRole="button" accessibilityLabel="Артқа">
-        {router.canGoBack() ? <ArrowLeft size={21} color={colors.ink} /> : <Text style={styles.brandSmall}>L</Text>}
-      </TouchableOpacity>
-      <View style={styles.headerText}><Text style={[styles.headerTitle, { color: theme.ink }]}>{title ?? 'LUMI'}</Text>{subtitle ? <Text style={[styles.headerSubtitle, { color: theme.muted }]}>{subtitle}</Text> : null}</View>
+  const appearance = useAppAppearance(); const pageColor = themeId === 'warm' ? appearance.palette.background : theme.page; const inkColor = themeId === 'warm' ? appearance.palette.ink : theme.ink; const mutedColor = themeId === 'warm' ? appearance.palette.muted : theme.muted;
+  return <SafeAreaView style={[styles.safe, { backgroundColor: pageColor }]} edges={['top', 'left', 'right']}>
+    {(title || right) && <View style={[styles.header, { backgroundColor: pageColor }]}>
+      {router.canGoBack() ? <TouchableOpacity onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel="Артқа" hitSlop={8}><ArrowLeft size={21} color={colors.ink} /></TouchableOpacity> : <View style={styles.back}><Text style={styles.brandSmall}>L</Text></View>}
+      <View style={styles.headerText}><Text style={[styles.headerTitle, { color: inkColor }]}>{title ?? 'LUMI'}</Text>{subtitle ? <Text style={[styles.headerSubtitle, { color: mutedColor }]}>{subtitle}</Text> : null}</View>
       {right ?? <View style={{ width: 34 }} />}
     </View>}
     {scroll ? <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scroll}>{body}</ScrollView> : body}

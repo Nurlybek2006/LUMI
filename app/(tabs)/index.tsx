@@ -3,7 +3,7 @@ import { Alert, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } fr
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { BookHeart, BookOpen, BookOpenCheck, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Code2, Flame, Languages, Lightbulb, Plus, Search, Sunrise, X } from 'lucide-react-native';
-import { AppScreen, Card, PrimaryButton, SectionTitle, TextField, colors } from '@/components/ui';
+import { AppScreen, Card, PrimaryButton, SectionTitle, TextField, colors, useAppAppearance } from '@/components/ui';
 import { getStats, listEntries, listNotebookPages, listNotebooks, listTasks, listWords, createNotebook, deleteNotebook, reorderNotebook, updateNotebook } from '@/database/repository';
 import { getTheme, themeIds, themes } from '@/themes/registry';
 import { localDate, addLocalDays } from '@/utils/core';
@@ -13,6 +13,7 @@ import type { Notebook, NotebookType, ThemeId } from '@/types/models';
 
 export default function LibraryScreen() {
   const db = useSQLiteContext();
+  const appearance = useAppAppearance();
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [pagesByNotebook, setPagesByNotebook] = useState<Record<string, number>>({});
   const [tomorrowTasks, setTomorrowTasks] = useState<{ title: string; completed: boolean }[]>([]);
@@ -55,8 +56,8 @@ export default function LibraryScreen() {
     if (modal === 'theme' && target) { await updateNotebook(db, target.id, { themeId: theme }); setModal(null); await refresh(); }
   };
 
-  return <AppScreen title="Кітап сөресі" subtitle="Жеке әлемің — LUMI" right={<TouchableOpacity onPress={() => router.push('/search')} style={styles.searchButton}><Search size={19} color={colors.ink} /></TouchableOpacity>}>
-    <View style={styles.greeting}><View><Text style={styles.eyebrow}>{new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</Text><Text style={styles.greetTitle}>Қош келдіңіз ✨</Text></View><View style={styles.moon}><Text style={{ fontSize: 23 }}>☼</Text></View></View>
+  return <AppScreen title="Кітап сөресі" subtitle="Жеке кітапханаңыз" right={<View style={{ flexDirection: 'row', gap: 7 }}><TouchableOpacity onPress={() => appearance.setMode(appearance.palette.background === '#181715' ? 'light' : 'dark')} style={styles.searchButton} accessibilityRole="button" accessibilityLabel="Ашық немесе қараңғы көріністі ауыстыру"><Text style={{ fontSize: 18, color: colors.accent }}>{appearance.palette.background === '#181715' ? '☼' : '☾'}</Text></TouchableOpacity><TouchableOpacity onPress={() => router.push('/search')} style={styles.searchButton}><Search size={19} color={colors.ink} /></TouchableOpacity></View>}>
+    <View style={styles.greeting}><View><Text style={styles.eyebrow}>{new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</Text><Text style={styles.greetTitle}>Қош келдіңіз ✨</Text></View></View>
     <Card style={styles.streakCard} color="#EDE3D5"><View style={styles.streakLeft}><View style={styles.flame}><Flame size={20} color="#A76843" /></View><View><Text style={styles.streakNum}>{stats.streak} күндік серпін</Text><Text style={styles.streakSub}>Бүгінгі ойыңызды жазып қойыңыз</Text></View></View><Text style={styles.streakMark}>✦</Text></Card>
 
     <View style={styles.quickRow}>

@@ -5,8 +5,18 @@ import { SaveQueue } from '../src/services/autosave.ts';
 import { isExternalActivityActive, withExternalActivity } from '../src/services/externalActivity.ts';
 import { DEFAULT_AUTO_LOCK_MINUTES, shouldAutoLockAfterBackground } from '../src/services/lockPolicy.ts';
 import { normalizeVocabularyTranslations } from '../src/utils/vocabulary.ts';
+import { paletteFor, resolveAppearance } from '../src/services/appearance.ts';
 
 const file = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('global appearance resolves Light, Dark and System palettes without touching notebook themes', () => {
+  assert.equal(resolveAppearance('light', true), 'light');
+  assert.equal(resolveAppearance('dark', false), 'dark');
+  assert.equal(resolveAppearance('system', true), 'dark');
+  assert.equal(resolveAppearance('system', false), 'light');
+  assert.notEqual(paletteFor('dark', false).background, paletteFor('light', false).background);
+  assert.equal(paletteFor('system', true).ink, paletteFor('dark', false).ink);
+});
 
 test('lock policy defaults to one minute and only locks after an eligible background interval', () => {
   assert.equal(DEFAULT_AUTO_LOCK_MINUTES, 1);

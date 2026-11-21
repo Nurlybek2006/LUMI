@@ -1,9 +1,10 @@
 import { Tabs } from 'expo-router';
+import { Pressable, type PressableProps } from 'react-native';
 import { CalendarCheck, Languages, Library, MoreHorizontal, PencilLine } from 'lucide-react-native';
 import { colors } from '@/components/ui';
 
 export default function TabLayout() {
-  return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.accent, tabBarInactiveTintColor: '#9B9084', tabBarStyle: { height: 67, paddingTop: 7, paddingBottom: 7, backgroundColor: '#FFFCF7', borderTopColor: '#EAE1D6' }, tabBarLabelStyle: { fontSize: 10, fontWeight: '700' } }}>
+  return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.accent, tabBarInactiveTintColor: '#9B9084', tabBarStyle: { height: 67, paddingTop: 7, paddingBottom: 7, backgroundColor: '#FFFCF7', borderTopColor: '#EAE1D6', elevation: 0 }, tabBarLabelStyle: { fontSize: 10, fontWeight: '700' }, tabBarButton: (props) => <TabsButton {...props} /> }}>
     <Tabs.Screen name="index" options={{ title: 'Сөре', tabBarIcon: ({ color, size }) => <Library color={color} size={size} /> }} />
     <Tabs.Screen name="editor" options={{ title: 'Редактор', tabBarIcon: ({ color, size }) => <PencilLine color={color} size={size} /> }} />
     <Tabs.Screen name="journal" options={{ href: null }} />
@@ -12,4 +13,8 @@ export default function TabLayout() {
     <Tabs.Screen name="more" options={{ title: 'Тағы', tabBarIcon: ({ color, size }) => <MoreHorizontal color={color} size={size} /> }} />
     <Tabs.Screen name="calendar" options={{ href: null }} />
   </Tabs>;
+}
+
+function TabsButton(props: PressableProps) {
+  return <Pressable {...props} android_ripple={{ color: '#A76B4518', borderless: false }} />;
 }
