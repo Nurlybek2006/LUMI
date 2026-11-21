@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert, Image, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions, type StyleProp, type TextStyle } from 'react-native';
+import { AccessibilityInfo, Image, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions, type StyleProp, type TextStyle } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -14,6 +14,8 @@ import { paginateEntry, type RenderedBookPage } from '@/utils/pagination';
 import { localDate, wordCount } from '@/utils/core';
 import type { Entry, Notebook, NotebookPage, PlannerTask, ThemeId, VocabularyWord } from '@/types/models';
 import { VocabularyColumnsBlock } from '@/components/VocabularyColumnsBlock';
+import { LumiActionSheet, LumiConfirmDialog } from '@/components/LumiModal';
+import { nextPageIndex, shouldCommitPageTurn } from '@/utils/pageTurn';
 
 export default function NotebookReaderScreen() {
   const { id, pageId: requestedPageId, date: requestedDate } = useLocalSearchParams<{ id: string; pageId?: string; date?: string }>();
@@ -26,14 +28,15 @@ export default function NotebookReaderScreen() {
   const [pageIndex, setPageIndex] = useState(0);
   const [themePicker, setThemePicker] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [pageAnimation, setPageAnimation] = useState<'smooth' | 'slide' | 'none'>('smooth');
   const translate = useSharedValue(0); const shade = useSharedValue(0);
   const activePage = pages[pageIndex]; const theme = getTheme(book?.themeId ?? 'warm');
 
   const refresh = useCallback(async () => {
-    const [notebook, allEntries, rememberedPage, systemReduce, motionSetting, allPages] = await Promise.all([
-      getNotebook(db, id), listEntries(db, id), readSetting(db, `reading:${id}`), AccessibilityInfo.isReduceMotionEnabled(), readSetting(db, 'reduced_motion'), listNotebookPages(db, id)
+    const [notebook, allEntries, rememberedPage, systemReduce, motionSetting, allPages, animationSetting] = await Promise.all([
+      getNotebook(db, id), listEntries(db, id), readSetting(db, `reading:${id}`), AccessibilityInfo.isReduceMotionEnabled(), readSetting(db, 'reduced_motion'), listNotebookPages(db, id), readSetting(db, 'page_animation')
     ]);
-    setBook(notebook); setBookLoaded(true); setEntries(allEntries); setGeneralPages(allPages); setReducedMotion(systemReduce || motionSetting === 'true');
+    setBook(notebook); setBookLoaded(true); setEntries(allEntries); setGeneralPages(allPages); setReducedMotion(systemReduce || motionSetting === 'true'); setPageAnimation(animationSetting === 'none' || animationSetting === 'slide' ? animationSetting : 'smooth');
     const calculated = allEntries.flatMap((entry) => paginateEntry(entry, Math.max(290, width - 76), Math.max(480, height - 245), notebook?.themeId ?? 'warm', fontScale));
     setPages(calculated);
     let rememberedIndex = Number(rememberedPage ?? 0);
@@ -61,16 +64,18 @@ export default function NotebookReaderScreen() {
   }, [book, db, id, pageIndex, pages]);
 
   const onPage = (direction: number) => {
-    const next = Math.min(pages.length - 1, Math.max(0, pageIndex + direction));
+    const next = nextPageIndex(pageIndex, direction < 0 ? -1 : 1, pages.length);
     if (next === pageIndex) { translate.value = withSpring(direction > 0 ? -14 : 14, {}, () => { translate.value = withSpring(0); }); return; }
-    setPageIndex(next);
+    setPageIndex(next); translate.value = withSpring(0, { damping: 20, stiffness: 190 }); shade.value = withTiming(0, { duration: 120 });
   };
-  const pan = Gesture.Pan().onUpdate((event) => { translate.value = event.translationX * 0.22; shade.value = Math.min(1, Math.abs(event.translationX) / 240); }).onEnd((event) => {
-    if (Math.abs(event.translationX) > 70) { const direction = event.translationX < 0 ? 1 : -1; translate.value = withTiming(direction > 0 ? -38 : 38, { duration: reducedMotion ? 0 : 110 }, () => runOnJS(onPage)(direction)); }
-    else translate.value = withSpring(0);
-    shade.value = withTiming(0, { duration: reducedMotion ? 0 : 150 });
+  const pan = Gesture.Pan().activeOffsetX([-12, 12]).failOffsetY([-24, 24]).onUpdate((event) => { translate.value = event.translationX; shade.value = Math.min(1, Math.abs(event.translationX) / 260); }).onEnd((event) => {
+    if (shouldCommitPageTurn(event.translationX, event.velocityX, width)) {
+      const direction = event.translationX < 0 ? 1 : -1;
+      if (reducedMotion || pageAnimation === 'none') { runOnJS(onPage)(direction); }
+      else { translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : 230 }, () => runOnJS(onPage)(direction)); }
+    } else { translate.value = withSpring(0, { damping: 19, stiffness: 180 }); shade.value = withTiming(0, { duration: 160 }); }
   });
-  const pageStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translate.value }], shadowOpacity: 0.12 + shade.value * 0.22, elevation: 2 + Math.round(shade.value * 6) }));
+  const pageStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translate.value }, { perspective: 900 }, { rotateZ: `${shade.value * (translate.value < 0 ? -0.6 : 0.6)}deg` }, { scaleX: 1 - shade.value * 0.035 }], shadowOpacity: 0.12 + shade.value * 0.25, shadowRadius: 3 + shade.value * 8, elevation: 2 + Math.round(shade.value * 6) }));
 
   const chooseTheme = async (themeId: ThemeId) => {
     if (!book) return;
@@ -109,6 +114,7 @@ export default function NotebookReaderScreen() {
 function GeneralNotebookReader({ book, pages, requestedPageId, onAdd, onRefresh }: { book: Notebook; pages: NotebookPage[]; requestedPageId?: string; onAdd: () => void; onRefresh: () => Promise<void> }) {
   const db = useSQLiteContext(); const theme = getTheme(book.themeId);
   const [index, setIndex] = useState(0); const [rename, setRename] = useState(false); const [title, setTitle] = useState(''); const [books, setBooks] = useState<Notebook[]>([]);
+  const [actionsOpen, setActionsOpen] = useState(false); const [confirmDelete, setConfirmDelete] = useState(false);
   const [positionReady, setPositionReady] = useState(false);
   const restoreKey = useRef('');
   const active = pages[index];
@@ -125,14 +131,7 @@ function GeneralNotebookReader({ book, pages, requestedPageId, onAdd, onRefresh 
   useEffect(() => { if (positionReady && pages.length) void writeSetting(db, `reading:${book.id}`, String(index)); }, [book.id, db, index, pages.length, positionReady]);
   const manage = async () => {
     if (!active) return;
-    const options: { text: string; onPress?: () => void; style?: 'destructive' | 'cancel' }[] = [
-      { text: 'Атауын өзгерту', onPress: () => { setTitle(active.title); setRename(true); } },
-      { text: 'Көшірмесін жасау', onPress: () => { void duplicateNotebookPage(db, active.id).then(onRefresh); } },
-      { text: 'Басқа дәптерге жылжыту', onPress: () => { void listNotebooks(db).then((items) => { setBooks(items.filter((item) => item.id !== book.id)); }); } },
-      { text: 'Бетті өшіру', style: 'destructive', onPress: () => Alert.alert('Бетті өшіру керек пе?', 'Дәптердің өзі сақталады.', [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Өшіру', style: 'destructive', onPress: () => { void deleteNotebookPage(db, active.id).then(async () => { setIndex(Math.max(0, index - 1)); await onRefresh(); }); } }] ) },
-      { text: 'Жабу', style: 'cancel' }
-    ];
-    Alert.alert(active.title || 'Бет әрекеттері', undefined, options);
+    setActionsOpen(true);
   };
   return <AppScreen title={book.title} subtitle={`${pages.length} бет`} themeId={book.themeId} scroll={false} contentStyle={readerStyles.generalReader} right={<TouchableOpacity style={styles.tool} onPress={onAdd} accessibilityLabel="Жаңа бет қосу"><Plus size={19} color={colors.ink} /></TouchableOpacity>}>
     <View style={[styles.bookHeader, { backgroundColor: theme.cover }]}><View style={styles.headerSpine} /><Text style={styles.headerOrnament}>{theme.ornament}</Text><View style={{ flex: 1 }}><Text style={styles.bookTitle}>{book.title}</Text><Text style={styles.bookSub}>{book.type === 'vocabulary' ? 'Тіл үйрену беттері · оқу' : 'Жалпы дәптер · тек оқу'}</Text></View><TouchableOpacity style={styles.newPage} onPress={onAdd} accessibilityRole="button"><Plus size={17} color={theme.cover} /></TouchableOpacity></View>
@@ -152,6 +151,13 @@ function GeneralNotebookReader({ book, pages, requestedPageId, onAdd, onRefresh 
     </> : <View style={styles.empty}><BookOpen size={36} color={theme.accent} /><Text style={[styles.emptyTitle, { color: theme.ink }]}>Дәптер әзірге бос</Text><Text style={[styles.emptyText, { color: theme.muted }]}>Алғашқы жазбаңызды еркін жазыңыз.</Text><TouchableOpacity onPress={onAdd} style={[styles.startButton, { backgroundColor: theme.cover }]}><Plus size={17} color="#FFF9F1" /><Text style={styles.startText}>Алғашқы бетті қосу</Text></TouchableOpacity></View>}
     <Modal visible={rename} transparent animationType="fade" onRequestClose={() => setRename(false)}><View style={readerStyles.renameShade}><View style={readerStyles.renamePanel}><Text style={styles.themeTitle}>Бет атауы</Text><TextInput value={title} onChangeText={setTitle} style={readerStyles.renameInput} autoFocus placeholder="Бет атауы" /><View style={readerStyles.renameActions}><TouchableOpacity onPress={() => setRename(false)}><Text style={styles.tocText}>Болдырмау</Text></TouchableOpacity><TouchableOpacity onPress={() => { if (active) void renameNotebookPage(db, active.id, title).then(async () => { setRename(false); await onRefresh(); }); }}><Text style={readerStyles.renameSave}>Сақтау</Text></TouchableOpacity></View></View></View></Modal>
     {books.length ? <View style={readerStyles.moveShade}><View style={readerStyles.movePanel}><Text style={styles.themeTitle}>Қай дәптерге жылжытасыз?</Text>{books.map((item) => <TouchableOpacity key={item.id} style={readerStyles.moveRow} onPress={() => { if (active) void moveNotebookPage(db, active.id, item.id).then(async () => { setBooks([]); setIndex(0); await onRefresh(); }); }}><Text style={styles.themeRowTitle}>{item.title}</Text><Text style={styles.themeRowSub}>{item.type}</Text></TouchableOpacity>)}<TouchableOpacity onPress={() => setBooks([])} style={{ padding: 12 }}><Text style={styles.tocText}>Болдырмау</Text></TouchableOpacity></View></View> : null}
+    <LumiActionSheet visible={actionsOpen} title={active?.title || 'Бет әрекеттері'} onClose={() => setActionsOpen(false)} actions={[
+      { label: 'Атауын өзгерту', onPress: () => { setActionsOpen(false); if (active) { setTitle(active.title); setRename(true); } } },
+      { label: 'Көшірмесін жасау', onPress: () => { setActionsOpen(false); if (active) void duplicateNotebookPage(db, active.id).then(onRefresh); } },
+      { label: 'Басқа дәптерге жылжыту', onPress: () => { setActionsOpen(false); void listNotebooks(db).then((items) => setBooks(items.filter((item) => item.id !== book.id))); } },
+      { label: 'Бетті өшіру', destructive: true, onPress: () => { setActionsOpen(false); setConfirmDelete(true); } }
+    ]} />
+    <LumiConfirmDialog visible={confirmDelete} title="Бетті өшіру керек пе?" message="Бұл бет біржола өшіріледі. Дәптердің өзі сақталады." confirmLabel="Бетті өшіру" onClose={() => setConfirmDelete(false)} onConfirm={() => { setConfirmDelete(false); if (active) void deleteNotebookPage(db, active.id).then(async () => { setIndex(Math.max(0, index - 1)); await onRefresh(); }); }} />
   </AppScreen>;
 }
 

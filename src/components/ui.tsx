@@ -2,7 +2,7 @@ import type { PropsWithChildren, ReactNode } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronRight, Search } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useSegments } from 'expo-router';
 import { getTheme } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
 import { createContext, useContext } from 'react';
@@ -13,12 +13,12 @@ export const AppAppearanceContext = createContext<{ mode: AppearanceMode; palett
 export const useAppAppearance = () => useContext(AppAppearanceContext);
 
 export function AppScreen({ children, title, subtitle, themeId = 'warm', scroll = true, right, contentStyle }: PropsWithChildren<{ title?: string; subtitle?: string; themeId?: ThemeId; scroll?: boolean; right?: ReactNode; contentStyle?: ViewStyle }>) {
-  const router = useRouter(); const theme = getTheme(themeId);
+  const router = useRouter(); const segments = useSegments() as string[]; const theme = getTheme(themeId); const isTopTab = segments[0] === '(tabs)' && ['index', 'editor', 'planner', 'vocabulary', 'more'].includes(segments[1] ?? ''); const canShowBack = router.canGoBack() && !isTopTab;
   const body = <View style={[styles.content, contentStyle]}>{children}</View>;
   const appearance = useAppAppearance(); const pageColor = themeId === 'warm' ? appearance.palette.background : theme.page; const inkColor = themeId === 'warm' ? appearance.palette.ink : theme.ink; const mutedColor = themeId === 'warm' ? appearance.palette.muted : theme.muted;
   return <SafeAreaView style={[styles.safe, { backgroundColor: pageColor }]} edges={['top', 'left', 'right']}>
     {(title || right) && <View style={[styles.header, { backgroundColor: pageColor }]}>
-      {router.canGoBack() ? <TouchableOpacity onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel="Артқа" hitSlop={8}><ArrowLeft size={21} color={colors.ink} /></TouchableOpacity> : <View style={styles.back}><Text style={styles.brandSmall}>L</Text></View>}
+      {canShowBack ? <TouchableOpacity onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel="Артқа" hitSlop={8}><ArrowLeft size={21} color={inkColor} /></TouchableOpacity> : <View style={styles.back}><Text style={[styles.brandSmall, { color: appearance.palette.accent }]}>L</Text></View>}
       <View style={styles.headerText}><Text style={[styles.headerTitle, { color: inkColor }]}>{title ?? 'LUMI'}</Text>{subtitle ? <Text style={[styles.headerSubtitle, { color: mutedColor }]}>{subtitle}</Text> : null}</View>
       {right ?? <View style={{ width: 34 }} />}
     </View>}
@@ -27,17 +27,20 @@ export function AppScreen({ children, title, subtitle, themeId = 'warm', scroll 
 }
 
 export function Card({ children, style, color }: PropsWithChildren<{ style?: StyleProp<ViewStyle>; color?: string }>) {
-  return <View style={[styles.card, color ? { backgroundColor: color } : null, style]}>{children}</View>;
+  const { palette } = useAppAppearance();
+  return <View style={[styles.card, { backgroundColor: color ?? palette.paper, borderColor: palette.line }, style]}>{children}</View>;
 }
 
 export function PrimaryButton({ title, onPress, icon, disabled, secondary, style }: { title: string; onPress: () => void; icon?: ReactNode; disabled?: boolean; secondary?: boolean; style?: ViewStyle }) {
-  return <TouchableOpacity accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, secondary ? styles.buttonSecondary : null, disabled ? { opacity: 0.5 } : null, style]}>
-    {icon}{<Text style={[styles.buttonText, secondary ? styles.buttonTextSecondary : null]}>{title}</Text>}
+  const { palette } = useAppAppearance();
+  return <TouchableOpacity accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, { backgroundColor: secondary ? palette.accentSoft : palette.ink }, secondary ? styles.buttonSecondary : null, disabled ? { opacity: 0.5 } : null, style]}>
+    {icon}{<Text style={[styles.buttonText, secondary ? { color: palette.ink } : null]}>{title}</Text>}
   </TouchableOpacity>;
 }
 
 export function TextField({ label, containerStyle, ...props }: TextInputProps & { label?: string; containerStyle?: ViewStyle }) {
-  return <View style={containerStyle}>{label ? <Text style={styles.label}>{label}</Text> : null}<TextInput placeholderTextColor="#A79B8E" {...props} style={[styles.input, props.multiline ? { minHeight: 108, textAlignVertical: 'top', paddingTop: 14 } : null, props.style]} />
+  const { palette } = useAppAppearance();
+  return <View style={containerStyle}>{label ? <Text style={[styles.label, { color: palette.muted }]}>{label}</Text> : null}<TextInput placeholderTextColor={palette.muted} {...props} style={[styles.input, { backgroundColor: palette.paper, color: palette.ink, borderColor: palette.line }, props.multiline ? { minHeight: 108, textAlignVertical: 'top', paddingTop: 14 } : null, props.style]} />
   </View>;
 }
 

@@ -6,6 +6,7 @@ import { isExternalActivityActive, withExternalActivity } from '../src/services/
 import { DEFAULT_AUTO_LOCK_MINUTES, shouldAutoLockAfterBackground } from '../src/services/lockPolicy.ts';
 import { normalizeVocabularyTranslations } from '../src/utils/vocabulary.ts';
 import { paletteFor, resolveAppearance } from '../src/services/appearance.ts';
+import { nextPageIndex, shouldCommitPageTurn } from '../src/utils/pageTurn.ts';
 
 const file = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -16,6 +17,15 @@ test('global appearance resolves Light, Dark and System palettes without touchin
   assert.equal(resolveAppearance('system', false), 'light');
   assert.notEqual(paletteFor('dark', false).background, paletteFor('light', false).background);
   assert.equal(paletteFor('system', true).ink, paletteFor('dark', false).ink);
+});
+
+test('page gestures commit at progress or velocity thresholds and clamp the page index', () => {
+  assert.equal(shouldCommitPageTurn(50, 100, 400), false);
+  assert.equal(shouldCommitPageTurn(80, 0, 400), true);
+  assert.equal(shouldCommitPageTurn(10, -900, 400), true);
+  assert.equal(nextPageIndex(0, -1, 4), 0);
+  assert.equal(nextPageIndex(3, 1, 4), 3);
+  assert.equal(nextPageIndex(1, 1, 4), 2);
 });
 
 test('lock policy defaults to one minute and only locks after an eligible background interval', () => {
