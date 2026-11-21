@@ -1,14 +1,15 @@
 import { useCallback, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { BookOpenText, CheckCircle2, Flame, Languages, PenLine, Star, Target } from 'lucide-react-native';
-import { AppScreen, Card, colors } from '@/components/ui';
+import { AppScreen, Card, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 import { getStats, listEntries } from '@/database/repository';
 import { addLocalDays, localDate, wordCount } from '@/utils/core';
 import type { ReactNode } from 'react';
 
 export default function StatisticsScreen() {
+  useAppAppearance();
   const db = useSQLiteContext();
   const [stats, setStats] = useState({ entries: 0, words: 0, tasksDone: 0, tasksTotal: 0, wordsReviewedToday: 0, wordsLearned: 0, totalWords: 0, streak: 0, longest: 0, monthlyDays: [] as string[] });
   const [wordsWritten, setWordsWritten] = useState(0);
@@ -29,7 +30,7 @@ export default function StatisticsScreen() {
   const today = new Date(`${localDate()}T12:00:00`);
   const lastDays = Array.from({ length: 30 }, (_, index) => { const date = new Date(today); date.setDate(today.getDate() - (29 - index)); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; });
 
-  return <AppScreen title="Менің жолым" subtitle="Жеке дамуыңыздың шынайы көрінісі">
+  return <AppScreen title="Статистика" subtitle={`${stats.entries} жазба · ${stats.tasksTotal} тапсырма · ${stats.words} сөз`}>
     <View style={styles.streakRow}><Card style={styles.streakCard} color="#EFE3D4"><Flame size={21} color="#AD6846" /><Text style={styles.streakValue}>{stats.streak}</Text><Text style={styles.streakLabel}>күндік қатар</Text></Card><Card style={styles.streakCard} color="#E8ECE2"><Star size={20} color="#6B8060" /><Text style={styles.streakValue}>{stats.longest}</Text><Text style={styles.streakLabel}>ең ұзақ қатар</Text></Card></View>
     <Text style={styles.heading}>Күнделік беттері</Text><View style={styles.metrics}><Metric icon={<BookOpenText size={19} color="#A56D48" />} value={stats.entries} label="Жазба" tint="#F3E8DA" /><Metric icon={<PenLine size={19} color="#81709A" />} value={wordsWritten} label="Жазылған сөз" tint="#ECE8F3" /></View>
     <Card style={styles.monthCard}><View style={styles.monthHead}><Text style={styles.cardTitle}>Соңғы 30 күн</Text><Text style={styles.monthSub}>{monthDays.length} белсенді күн</Text></View><View style={styles.activityGrid}>{lastDays.map((date) => <View key={date} style={[styles.activityCell, activitySet.has(date) ? styles.activityOn : null]} />)}</View><View style={styles.activityLegend}><Text style={styles.legendText}>Аз</Text>{['#F0E9DF', '#D9C9B4', '#B99773', '#7D6045'].map((color) => <View key={color} style={[styles.legendCell, { backgroundColor: color }]} />)}<Text style={styles.legendText}>Көп</Text></View></Card>
@@ -40,6 +41,7 @@ export default function StatisticsScreen() {
 }
 
 function Metric({ icon, value, label, tint }: { icon: ReactNode; value: number; label: string; tint: string }) {
+  useAppAppearance();
   return <Card style={styles.metricCard}><View style={[styles.metricIcon, { backgroundColor: tint }]}>{icon}</View><Text style={styles.metricValue}>{value.toLocaleString('kk-KZ')}</Text><Text style={styles.metricLabel}>{label}</Text></Card>;
 }
 

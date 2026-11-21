@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, StyleSheet, TouchableOpacity } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { ArrowLeft, ArrowRight, Check, RotateCcw, Sparkles, X } from 'lucide-react-native';
-import { AppScreen, colors } from '@/components/ui';
+import { AppScreen, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 import { listWords, reviewWord } from '@/database/repository';
 import { readSetting } from '@/database/settings';
 import { addLocalDays, localDate, nextReview } from '@/utils/core';
 import type { VocabularyWord } from '@/types/models';
 
 export default function ReviewScreen() {
+  useAppAppearance();
   const db = useSQLiteContext();
   const [queue, setQueue] = useState<VocabularyWord[]>([]);
   const [index, setIndex] = useState(0);

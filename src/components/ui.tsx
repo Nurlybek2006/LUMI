@@ -1,21 +1,45 @@
-import type { PropsWithChildren, ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
+import type { ComponentRef, PropsWithChildren, ReactNode } from 'react';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type StyleProp, type TextInputProps, type ViewStyle, type TextProps, type ViewProps } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronRight, Search } from 'lucide-react-native';
 import { useRouter, useSegments } from 'expo-router';
 import { getTheme } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
-import { createContext, useContext } from 'react';
+import { createContext, forwardRef, useContext } from 'react';
 import type { AppearanceMode, Palette } from '@/services/appearance';
+import { lightPalette } from '@/services/appearance';
 
-export const colors = { background: '#F7F3EC', paper: '#FFFCF7', ink: '#302820', muted: '#887C70', accent: '#A76B45', line: '#E8DED2', green: '#527A62', red: '#A84E43' };
+let activePalette = lightPalette;
+export function setGlobalColorTokens(palette: Palette) { activePalette = palette; }
+export const colors = {
+  get background() { return activePalette.background; }, get paper() { return activePalette.paper; }, get ink() { return activePalette.ink; }, get muted() { return activePalette.muted; }, get accent() { return activePalette.accent; }, get line() { return activePalette.line; }, get green() { return activePalette.green; }, get red() { return activePalette.red; }
+};
 export const AppAppearanceContext = createContext<{ mode: AppearanceMode; palette: Palette; setMode: (mode: AppearanceMode) => void }>({ mode: 'system', palette: { background: colors.background, paper: colors.paper, elevated: '#FFF', ink: colors.ink, muted: colors.muted, accent: colors.accent, accentSoft: '#F0E5D8', line: colors.line, green: colors.green, red: colors.red, navigation: colors.paper, overlay: '#221B1680' }, setMode: () => undefined });
 export const useAppAppearance = () => useContext(AppAppearanceContext);
 
-export function AppScreen({ children, title, subtitle, themeId = 'warm', scroll = true, right, contentStyle }: PropsWithChildren<{ title?: string; subtitle?: string; themeId?: ThemeId; scroll?: boolean; right?: ReactNode; contentStyle?: ViewStyle }>) {
-  const router = useRouter(); const segments = useSegments() as string[]; const theme = getTheme(themeId); const isTopTab = segments[0] === '(tabs)' && ['index', 'editor', 'planner', 'vocabulary', 'more'].includes(segments[1] ?? ''); const canShowBack = router.canGoBack() && !isTopTab;
+const textTokenMap: Record<string, keyof Palette> = {
+  '#302820': 'ink', '#40352c': 'ink', '#382820': 'ink', '#887c70': 'muted', '#897c70': 'muted', '#766b61': 'muted', '#a3988c': 'muted', '#9e9387': 'muted', '#a79b8e': 'muted', '#81709a': 'muted', '#85749f': 'muted', '#9b9084': 'muted', '#a76b45': 'accent', '#b08968': 'accent', '#af865c': 'accent', '#b7864a': 'accent', '#a8793d': 'accent', '#6b8060': 'green', '#638267': 'green', '#527a62': 'green', '#a84e43': 'red', '#c36664': 'red'
+};
+const surfaceTokenMap: Record<string, keyof Palette> = {
+  '#f7f3ec': 'background', '#fffcf7': 'paper', '#ffffff': 'elevated', '#fff': 'elevated', '#f1e9de': 'accentSoft', '#f0e9df': 'accentSoft', '#efe8de': 'accentSoft', '#eee7de': 'accentSoft', '#eee7dd': 'accentSoft', '#f2e7d9': 'accentSoft', '#f0e8dc': 'accentSoft', '#f1ebe2': 'accentSoft', '#efe7dc': 'accentSoft', '#e8d7c2': 'accentSoft', '#f3ece2': 'accentSoft', '#e6e5dc': 'accentSoft', '#e6eee4': 'accentSoft', '#e8ece2': 'accentSoft', '#ece8f3': 'accentSoft', '#ece9f3': 'accentSoft', '#f1e5d8': 'accentSoft', '#f1eae1': 'accentSoft', '#ede3d5': 'accentSoft', '#eee2d2': 'accentSoft', '#f7efe4': 'accentSoft', '#f3e7d7': 'accentSoft'
+};
+
+export const ThemedText = forwardRef<ComponentRef<typeof Text>, TextProps>(function ThemedText({ style, ...props }, ref) {
+  const { palette } = useAppAppearance(); const flattened = StyleSheet.flatten(style); const token = typeof flattened?.color === 'string' ? textTokenMap[flattened.color.toLowerCase()] : undefined;
+  return <Text ref={ref} {...props} style={[style, token ? { color: palette[token] } : null]} />;
+});
+
+export const ThemedView = forwardRef<ComponentRef<typeof View>, ViewProps>(function ThemedView({ style, ...props }, ref) {
+  const { palette } = useAppAppearance(); const flattened = StyleSheet.flatten(style);
+  const bg = typeof flattened?.backgroundColor === 'string' ? surfaceTokenMap[flattened.backgroundColor.toLowerCase()] : undefined;
+  const border = typeof flattened?.borderColor === 'string' && ['#e8ded2', '#efe7dc', '#eae1d6', '#e6dacb'].includes(flattened.borderColor.toLowerCase());
+  return <View ref={ref} {...props} style={[style, bg ? { backgroundColor: palette[bg] } : null, border ? { borderColor: palette.line } : null]} />;
+});
+
+export function AppScreen({ children, title, subtitle, themeId, scroll = true, right, contentStyle }: PropsWithChildren<{ title?: string; subtitle?: string; themeId?: ThemeId; scroll?: boolean; right?: ReactNode; contentStyle?: ViewStyle }>) {
+  const router = useRouter(); const segments = useSegments() as string[]; const theme = getTheme(themeId ?? 'warm'); const isTopTab = segments[0] === '(tabs)' && ['index', 'editor', 'planner', 'vocabulary', 'more'].includes(segments[1] ?? ''); const canShowBack = router.canGoBack() && !isTopTab;
   const body = <View style={[styles.content, contentStyle]}>{children}</View>;
-  const appearance = useAppAppearance(); const pageColor = themeId === 'warm' ? appearance.palette.background : theme.page; const inkColor = themeId === 'warm' ? appearance.palette.ink : theme.ink; const mutedColor = themeId === 'warm' ? appearance.palette.muted : theme.muted;
+  const appearance = useAppAppearance(); const pageColor = themeId ? theme.page : appearance.palette.background; const inkColor = themeId ? theme.ink : appearance.palette.ink; const mutedColor = themeId ? theme.muted : appearance.palette.muted;
   return <SafeAreaView style={[styles.safe, { backgroundColor: pageColor }]} edges={['top', 'left', 'right']}>
     {(title || right) && <View style={[styles.header, { backgroundColor: pageColor }]}>
       {canShowBack ? <TouchableOpacity onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel="Артқа" hitSlop={8}><ArrowLeft size={21} color={inkColor} /></TouchableOpacity> : <View style={styles.back}><Text style={[styles.brandSmall, { color: appearance.palette.accent }]}>L</Text></View>}
@@ -28,7 +52,8 @@ export function AppScreen({ children, title, subtitle, themeId = 'warm', scroll 
 
 export function Card({ children, style, color }: PropsWithChildren<{ style?: StyleProp<ViewStyle>; color?: string }>) {
   const { palette } = useAppAppearance();
-  return <View style={[styles.card, { backgroundColor: color ?? palette.paper, borderColor: palette.line }, style]}>{children}</View>;
+  const mapped = color ? surfaceTokenMap[color.toLowerCase()] : undefined;
+  return <ThemedView style={[styles.card, { backgroundColor: mapped ? palette[mapped] : color ?? palette.paper, borderColor: palette.line }, style]}>{children}</ThemedView>;
 }
 
 export function PrimaryButton({ title, onPress, icon, disabled, secondary, style }: { title: string; onPress: () => void; icon?: ReactNode; disabled?: boolean; secondary?: boolean; style?: ViewStyle }) {

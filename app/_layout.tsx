@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Animated, AppState, Text, TextInput, TouchableOpacity, View, useColorScheme } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, AppState, TextInput, TouchableOpacity, useColorScheme } from 'react-native';
 import { Stack } from 'expo-router';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -11,7 +11,7 @@ import { isExternalActivityActive, withExternalActivity } from '@/services/exter
 import { DEFAULT_AUTO_LOCK_MINUTES, shouldAutoLockAfterBackground } from '@/services/lockPolicy';
 import { authenticateBiometric, biometricEnabled, hasPin, verifyPin } from '@/services/security';
 import { useSession } from '@/store/session';
-import { AppAppearanceContext, colors } from '@/components/ui';
+import { AppAppearanceContext, setGlobalColorTokens, ThemedText as Text, ThemedView as View } from '@/components/ui';
 import { paletteFor, resolveAppearance, type AppearanceMode } from '@/services/appearance';
 import { Fingerprint, LockKeyhole } from 'lucide-react-native';
 
@@ -30,8 +30,8 @@ function AppGate() {
   const [splashOpacity] = useState(() => new Animated.Value(0));
   const [splashScale] = useState(() => new Animated.Value(0.96));
   useEffect(() => {
-    void readSetting(db, 'appearance_mode').then((value) => { if (value === 'light' || value === 'dark' || value === 'system') setAppearanceMode(value); });
-  }, [db]);
+    void readSetting(db, 'appearance_mode').then((value) => { if (value === 'light' || value === 'dark' || value === 'system') { setGlobalColorTokens(paletteFor(value, systemScheme === 'dark')); setAppearanceMode(value); } });
+  }, [db, systemScheme]);
 
   useEffect(() => {
     if (initialized) return;
@@ -90,18 +90,19 @@ function AppGate() {
     else setError('Биометриялық тексеру орындалмады. PIN енгізіңіз.');
   };
 
-  const palette = paletteFor(appearanceMode, systemScheme === 'dark'); const isDark = resolveAppearance(appearanceMode, systemScheme === 'dark') === 'dark';
+  const palette = useMemo(() => paletteFor(appearanceMode, systemScheme === 'dark'), [appearanceMode, systemScheme]); const isDark = resolveAppearance(appearanceMode, systemScheme === 'dark') === 'dark';
+  useEffect(() => { setGlobalColorTokens(palette); }, [palette]);
   if (!initialized) return <View style={{ flex: 1, backgroundColor: palette.background, alignItems: 'center', justifyContent: 'center' }}><Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: 'center' }}><Text style={{ fontFamily: 'serif', color: palette.accent, fontSize: 44 }}>LUMI</Text><Text style={{ color: palette.muted, marginTop: 8 }}>Жеке әлемің</Text></Animated.View></View>;
-  return <AppAppearanceContext.Provider value={{ mode: appearanceMode, palette, setMode: (mode) => { setAppearanceMode(mode); void writeSetting(db, 'appearance_mode', mode); } }}>
+  return <AppAppearanceContext.Provider value={{ mode: appearanceMode, palette, setMode: (mode) => { setGlobalColorTokens(paletteFor(mode, systemScheme === 'dark')); setAppearanceMode(mode); void writeSetting(db, 'appearance_mode', mode); } }}>
     <StatusBar style={isDark ? 'light' : 'dark'} />
-    <Stack screenOptions={{ headerShown: false, animation: 'fade_from_bottom', contentStyle: { backgroundColor: colors.background } }} />
-    {locked ? <View accessibilityViewIsModal style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 100, elevation: 100, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', padding: 28 }}>
-      <View style={{ width: 78, height: 78, borderRadius: 26, backgroundColor: '#EFE6D9', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}><LockKeyhole size={30} color={colors.accent} /></View>
-      <Text style={{ fontFamily: 'serif', color: colors.ink, fontSize: 28 }}>Қош келдіңіз</Text><Text style={{ color: colors.muted, fontSize: 14, marginTop: 8, marginBottom: 28 }}>Жеке кеңістігіңізді ашу үшін PIN енгізіңіз</Text>
-      <TextInput value={pin} onChangeText={(value) => setPin(value.replace(/\D/gu, '').slice(0, 8))} onSubmitEditing={() => void submitPin()} keyboardType="number-pad" secureTextEntry maxLength={8} placeholder="••••" placeholderTextColor="#B9AC9D" style={{ width: 220, height: 56, backgroundColor: colors.paper, color: colors.ink, borderColor: colors.line, borderWidth: 1, borderRadius: 16, textAlign: 'center', fontSize: 24, letterSpacing: 12 }} accessibilityLabel="Қолданбаны ашу PIN-і" />
-      <TouchableOpacity onPress={() => void submitPin()} accessibilityRole="button" style={{ marginTop: 16, backgroundColor: colors.ink, paddingVertical: 14, paddingHorizontal: 40, borderRadius: 14 }}><Text style={{ color: '#FFF9F1', fontWeight: '700' }}>Ашу</Text></TouchableOpacity>
-      {biometricReady ? <TouchableOpacity onPress={() => void unlockWithBiometrics()} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 20 }}><Fingerprint size={17} color={colors.accent} /><Text style={{ color: colors.accent, fontWeight: '700' }}>Биометриямен ашу</Text></TouchableOpacity> : null}
-      {error ? <Text style={{ color: colors.red, marginTop: 14 }}>{error}</Text> : null}
+    <Stack screenOptions={{ headerShown: false, animation: 'fade_from_bottom', contentStyle: { backgroundColor: palette.background } }} />
+    {locked ? <View accessibilityViewIsModal style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 100, elevation: 100, backgroundColor: palette.background, alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+      <View style={{ width: 78, height: 78, borderRadius: 26, backgroundColor: palette.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}><LockKeyhole size={30} color={palette.accent} /></View>
+      <Text style={{ fontFamily: 'serif', color: palette.ink, fontSize: 28 }}>Қош келдіңіз</Text><Text style={{ color: palette.muted, fontSize: 14, marginTop: 8, marginBottom: 28 }}>Жеке кеңістігіңізді ашу үшін PIN енгізіңіз</Text>
+      <TextInput value={pin} onChangeText={(value) => setPin(value.replace(/\D/gu, '').slice(0, 8))} onSubmitEditing={() => void submitPin()} keyboardType="number-pad" secureTextEntry maxLength={8} placeholder="••••" placeholderTextColor={palette.muted} style={{ width: 220, height: 56, backgroundColor: palette.paper, color: palette.ink, borderColor: palette.line, borderWidth: 1, borderRadius: 16, textAlign: 'center', fontSize: 24, letterSpacing: 12 }} accessibilityLabel="Қолданбаны ашу PIN-і" />
+      <TouchableOpacity onPress={() => void submitPin()} accessibilityRole="button" style={{ marginTop: 16, backgroundColor: palette.ink, paddingVertical: 14, paddingHorizontal: 40, borderRadius: 14 }}><Text style={{ color: '#FFF9F1', fontWeight: '700' }}>Ашу</Text></TouchableOpacity>
+      {biometricReady ? <TouchableOpacity onPress={() => void unlockWithBiometrics()} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 20 }}><Fingerprint size={17} color={palette.accent} /><Text style={{ color: palette.accent, fontWeight: '700' }}>Биометриямен ашу</Text></TouchableOpacity> : null}
+      {error ? <Text style={{ color: palette.red, marginTop: 14 }}>{error}</Text> : null}
     </View> : null}
   </AppAppearanceContext.Provider>;
 }

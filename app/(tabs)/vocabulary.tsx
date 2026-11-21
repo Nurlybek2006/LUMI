@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { BookOpenCheck, Download, Heart, Languages, Plus, Search, Sparkles, Trash2, Upload, X } from 'lucide-react-native';
-import { AppScreen, Card, PrimaryButton, TextField, colors } from '@/components/ui';
+import { BookOpenCheck, Download, Heart, Languages, Plus, Search, Sparkles, Trash2, Upload } from 'lucide-react-native';
+import { AppScreen, Card, PrimaryButton, TextField, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 import { deleteWord, listVocabularyLanguages, listWords, saveMultilingualWord, saveVocabularyLanguages, setWordLearningStatus, type VocabularySort } from '@/database/repository';
 import { exportVocabulary, importVocabulary } from '@/services/vocabularyTransfer';
 import { localDate } from '@/utils/core';
 import type { VocabularyWord } from '@/types/models';
 import { normalizeVocabularyTranslations, parseBulkVocabulary } from '@/utils/vocabulary';
 import { randomUUID } from 'expo-crypto';
+import { LumiConfirmDialog, LumiDialog } from '@/components/LumiModal';
 
 const languageLabels: Record<string, string> = { en: 'Ағылшынша', kk: 'Қазақша', ru: 'Орысша' };
 type TranslationDraft = { key: string; id?: string; languageCode: string; value: string };
 
 export default function VocabularyScreen() {
+  useAppAppearance();
   const db = useSQLiteContext();
   const { wordId, notebookId: selectedNotebookId } = useLocalSearchParams<{ wordId?: string; notebookId?: string }>();
   const vocabularyNotebookId = selectedNotebookId ?? 'vocabulary';
@@ -38,6 +40,7 @@ export default function VocabularyScreen() {
   const [favoriteInput, setFavoriteInput] = useState(false);
   const [filter, setFilter] = useState<'all' | 'due' | 'learned' | 'favorite'>('all');
   const [sort, setSort] = useState<VocabularySort>('due');
+  const [deleteTarget, setDeleteTarget] = useState<VocabularyWord | null>(null);
 
   const refresh = useCallback(async () => { const [items, configured] = await Promise.all([listWords(db, query, sort, vocabularyNotebookId), listVocabularyLanguages(db, vocabularyNotebookId)]); setWords(items); setLanguages(configured); setLanguageText(configured.join(', ')); }, [db, query, sort, vocabularyNotebookId]);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
@@ -103,13 +106,13 @@ export default function VocabularyScreen() {
       await refresh();
     } catch (error) { Alert.alert('Сақтау қатесі', error instanceof Error ? error.message : 'Қайталап көріңіз.'); }
   };
-  const askDelete = (word: VocabularyWord) => Alert.alert('Сөзді өшіру керек пе?', `${word.source} — ${word.translation}`, [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Өшіру', style: 'destructive', onPress: () => { void deleteWord(db, word.id).then(refresh); } }]);
+  const askDelete = (word: VocabularyWord) => setDeleteTarget(word);
   const transfer = async (type: 'export' | 'import') => {
     try { if (type === 'export') await exportVocabulary(db); else { const count = await importVocabulary(db); if (count) Alert.alert('Импорт аяқталды', `${count} сөз қосылды немесе жаңартылды.`); await refresh(); } }
     catch (error) { Alert.alert(type === 'export' ? 'Экспорт қатесі' : 'Импорт қатесі', error instanceof Error ? error.message : 'Қайта көріңіз.'); }
   };
 
-  return <AppScreen title="Сөздер қоржыны" subtitle="Күн сайын бір сөз — жаңа мүмкіндік" right={<TouchableOpacity style={styles.headerButton} onPress={() => resetForm()}><Plus size={20} color={colors.ink} /></TouchableOpacity>}>
+  return <AppScreen title="Сөздер қоржыны" subtitle={`${words.length} сөз · ${reviewable.length} қайталау күтіп тұр`} right={<TouchableOpacity style={styles.headerButton} onPress={() => resetForm()} accessibilityRole="button" accessibilityLabel="Жаңа сөз қосу"><Plus size={20} color={colors.ink} /></TouchableOpacity>}>
     <Card style={styles.hero} color="#EDE4D8"><View style={styles.heroIcon}><Languages size={21} color="#A76B45" /></View><View style={{ flex: 1 }}><Text style={styles.heroTitle}>Қайталауға дайын</Text><Text style={styles.heroSub}>{reviewable.length} сөз бүгінгі шолуда</Text></View><TouchableOpacity onPress={() => router.push('/review')} style={styles.reviewButton}><BookOpenCheck size={18} color="#FFF9F1" /></TouchableOpacity></Card>
     <Card style={extraStyles.quickCard}><View style={extraStyles.quickHeader}><Text style={styles.sectionTitle}>Жылдам қосу</Text><TouchableOpacity onPress={() => setLanguageModal(true)}><Text style={extraStyles.configure}>Тілдерді реттеу</Text></TouchableOpacity></View><ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={extraStyles.quickFields}>{languages.map((language) => <View key={language} style={extraStyles.quickField}><Text style={extraStyles.quickLanguage}>{languageLabels[language] ?? language.toUpperCase()}</Text><TextInput value={quickValues[language] ?? ''} onChangeText={(value) => { setQuickValues((current) => ({ ...current, [language]: value })); setQuickMessage(''); }} placeholder="Сөз не тіркес" placeholderTextColor="#A79B8E" style={extraStyles.quickInput} returnKeyType="next" /></View>)}</ScrollView><View style={extraStyles.quickFooter}><Text style={extraStyles.quickMessage}>{quickMessage}</Text><TouchableOpacity style={extraStyles.quickSave} onPress={() => void saveQuick()}><Plus size={15} color="#FFF9F1" /><Text style={extraStyles.quickSaveText}>Қосу</Text></TouchableOpacity></View></Card>
     <View style={styles.searchBox}><Search size={17} color={colors.muted} /><TextField value={query} onChangeText={setQuery} placeholder="Сөзді немесе аударманы іздеу" containerStyle={{ flex: 1 }} inputMode="search" /></View>
@@ -127,10 +130,8 @@ export default function VocabularyScreen() {
     </Card>) : <Card style={styles.empty}><View style={styles.emptyIcon}><Sparkles size={21} color={colors.accent} /></View><Text style={styles.emptyTitle}>{query ? 'Сөз табылмады' : 'Сөздік әлі бос'}</Text><Text style={styles.emptyText}>{query ? 'Басқа сөзбен іздеп көріңіз.' : 'Кездескен жаңа сөзді осында сақтаңыз.'}</Text><PrimaryButton title="Алғашқы сөзді қосу" icon={<Plus size={16} color="#FFF9F1" />} onPress={() => resetForm()} style={{ marginTop: 14 }} /></Card>}
     <View style={styles.transferRow}><TouchableOpacity onPress={() => void transfer('export')} style={styles.transferButton}><Download size={15} color={colors.accent} /><Text style={styles.transferText}>JSON экспорт</Text></TouchableOpacity><TouchableOpacity onPress={() => void transfer('import')} style={styles.transferButton}><Upload size={15} color={colors.accent} /><Text style={styles.transferText}>JSON импорт</Text></TouchableOpacity><TouchableOpacity onPress={() => setBulkModal(true)} style={styles.transferButton}><Plus size={15} color={colors.accent} /><Text style={styles.transferText}>Көп сөз қосу</Text></TouchableOpacity></View>
 
-    <Modal visible={modal} transparent animationType="fade" onRequestClose={() => setModal(false)}>
-      <View style={styles.modalShade}><View style={styles.modal}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{editing ? 'Сөзді өңдеу' : 'Жаңа сөз'}</Text><TouchableOpacity onPress={() => setModal(false)}><X size={19} color={colors.muted} /></TouchableOpacity></View>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 12 }}>
+    <LumiDialog visible={modal} title={editing ? 'Сөзді өңдеу' : 'Жаңа сөз'} onClose={() => setModal(false)}>
+        <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 12 }}>
           <Text style={styles.sectionTitle}>Аудармалар</Text>
           <Text style={extraStyles.quickHint}>Әр жолда тіл кодын және сөздің сол тілдегі нұсқасын енгізіңіз. Қажет болса, кез келген тіл санын қосуға болады.</Text>
           {editTranslations.map((item, index) => <View key={item.key} style={extraStyles.translationEditRow}>
@@ -153,10 +154,10 @@ export default function VocabularyScreen() {
           <TouchableOpacity style={extraStyles.favoriteToggle} onPress={() => setFavoriteInput((value) => !value)}><Heart size={17} color={favoriteInput ? '#C36664' : colors.muted} fill={favoriteInput ? '#C36664' : 'transparent'} /><Text style={styles.fieldLabel}>{favoriteInput ? 'Таңдаулы сөз' : 'Таңдаулыға қосу'}</Text></TouchableOpacity>
         </ScrollView>
         <PrimaryButton title="Сақтау" onPress={() => void save()} style={{ marginTop: 14 }} />
-      </View></View>
-    </Modal>
-    <Modal visible={languageModal} transparent animationType="fade" onRequestClose={() => setLanguageModal(false)}><View style={styles.modalShade}><View style={styles.modal}><Text style={styles.modalTitle}>Тілдерді және баған ретін реттеу</Text><Text style={extraStyles.quickHint}>Тіл кодтарын үтірмен бөліңіз. Мысалы: kk, ru, en, tr</Text><TextInput value={languageText} onChangeText={setLanguageText} autoCapitalize="none" style={extraStyles.languageInput} placeholder="kk, ru, en" /><PrimaryButton title="Сақтау" onPress={() => void saveLanguages()} /></View></View></Modal>
-    <Modal visible={bulkModal} transparent animationType="fade" onRequestClose={() => setBulkModal(false)}><View style={styles.modalShade}><View style={styles.modal}><Text style={styles.modalTitle}>Көп сөзді бірден қосу</Text><Text style={extraStyles.quickHint}>Әр жолға бір сөз. Бағандарды | таңбасымен бөліңіз: {languages.join(' | ')}</Text><TextInput multiline value={bulkText} onChangeText={setBulkText} style={extraStyles.bulkInput} placeholder="алма | яблоко | apple" textAlignVertical="top" autoCapitalize="none" /><ScrollView style={{ maxHeight: 190 }}>{bulkRows.map((row) => <Text key={row.line} style={[extraStyles.previewRow, row.error ? extraStyles.previewError : null]}>{row.error ? `Жол ${row.line}: ${row.error}` : `${row.line}. ${row.values.join('  ·  ')}`}</Text>)}</ScrollView><PrimaryButton title={`Алдын ала көру және сақтау (${bulkRows.filter((row) => !row.error).length})`} onPress={() => void importBulk()} disabled={!bulkRows.length || bulkRows.some((row) => row.error)} style={{ marginTop: 10 }} /></View></View></Modal>
+    </LumiDialog>
+    <LumiConfirmDialog visible={Boolean(deleteTarget)} title="Сөзді өшіру керек пе?" message={deleteTarget ? `${deleteTarget.source} — ${deleteTarget.translation}` : ''} confirmLabel="Өшіру" onClose={() => setDeleteTarget(null)} onConfirm={() => { const target = deleteTarget; setDeleteTarget(null); if (target) void deleteWord(db, target.id).then(refresh); }} />
+    <LumiDialog visible={languageModal} title="Тілдерді және баған ретін реттеу" onClose={() => setLanguageModal(false)}><Text style={extraStyles.quickHint}>Тіл кодтарын үтірмен бөліңіз. Мысалы: kk, ru, en, tr</Text><TextInput value={languageText} onChangeText={setLanguageText} autoCapitalize="none" style={extraStyles.languageInput} placeholder="kk, ru, en" /><PrimaryButton title="Сақтау" onPress={() => void saveLanguages()} /></LumiDialog>
+    <LumiDialog visible={bulkModal} title="Көп сөзді бірден қосу" onClose={() => setBulkModal(false)}><Text style={extraStyles.quickHint}>Әр жолға бір сөз. Бағандарды | таңбасымен бөліңіз: {languages.join(' | ')}</Text><TextInput multiline value={bulkText} onChangeText={setBulkText} style={extraStyles.bulkInput} placeholder="алма | яблоко | apple" textAlignVertical="top" autoCapitalize="none" /><ScrollView style={{ maxHeight: 190 }}>{bulkRows.map((row) => <Text key={row.line} style={[extraStyles.previewRow, row.error ? extraStyles.previewError : null]}>{row.error ? `Жол ${row.line}: ${row.error}` : `${row.line}. ${row.values.join('  ·  ')}`}</Text>)}</ScrollView><PrimaryButton title={`Алдын ала көру және сақтау (${bulkRows.filter((row) => !row.error).length})`} onPress={() => void importBulk()} disabled={!bulkRows.length || bulkRows.some((row) => row.error)} style={{ marginTop: 10 }} /></LumiDialog>
   </AppScreen>;
 }
 

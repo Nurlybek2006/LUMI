@@ -17,7 +17,8 @@ export default function TabLayout() {
 }
 
 function TabsButton(props: PressableProps) {
-  return <Pressable {...props} android_ripple={{ color: '#A76B4518', borderless: false }} />;
+  const { style, ...rest } = props;
+  return <Pressable {...rest} style={(state) => [typeof style === 'function' ? style(state) : style, state.pressed ? { opacity: 0.76 } : null]} android_ripple={{ color: '#A76B4518', borderless: false }} />;
 }
 
 function TabIcon({ color, size, focused, children }: { color: ColorValue | null; size: number; focused: boolean; children: React.ReactNode }) {

@@ -1,14 +1,16 @@
 import { useCallback, useState } from 'react';
-import { Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, StyleSheet, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Circle, Clock3, CopyPlus, ListTodo, Plus, Star, X } from 'lucide-react-native';
-import { AppScreen, Card, PrimaryButton, TextField, colors } from '@/components/ui';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Circle, Clock3, CopyPlus, ListTodo, Plus, Star } from 'lucide-react-native';
+import { AppScreen, Card, PrimaryButton, TextField, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 import { addTask, deleteTask, listTasks, moveTask, reorderTask, updateTask } from '@/database/repository';
 import { addLocalDays, localDate } from '@/utils/core';
 import type { PlannerTask } from '@/types/models';
+import { LumiConfirmDialog, LumiDialog } from '@/components/LumiModal';
 
 export default function PlannerScreen() {
+  useAppAppearance();
   const params = useLocalSearchParams<{ date?: string; notebookId?: string }>();
   const initialDate = typeof params.date === 'string' ? params.date : localDate();
   const notebookId = typeof params.notebookId === 'string' ? params.notebookId : 'plans';
@@ -16,6 +18,7 @@ export default function PlannerScreen() {
 }
 
 function PlannerForDate({ initialDate, notebookId }: { initialDate: string; notebookId: string }) {
+  useAppAppearance();
   const db = useSQLiteContext();
   const router = useRouter();
   const [date, setDate] = useState(initialDate);
@@ -26,6 +29,8 @@ function PlannerForDate({ initialDate, notebookId }: { initialDate: string; note
   const [time, setTime] = useState('');
   const [priority, setPriority] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [deleteTaskTarget, setDeleteTaskTarget] = useState<PlannerTask | null>(null);
+  const [carryConfirm, setCarryConfirm] = useState(false);
   const done = tasks.filter((task) => task.completed).length;
   const ratio = tasks.length ? done / tasks.length : 0;
   const dateTitle = date === localDate() ? 'Бүгін' : date === addLocalDays(localDate(), 1) ? 'Ертең' : new Intl.DateTimeFormat('kk-KZ', { day: 'numeric', month: 'long', weekday: 'long' }).format(new Date(`${date}T12:00:00`));
@@ -49,7 +54,7 @@ function PlannerForDate({ initialDate, notebookId }: { initialDate: string; note
   const carryForward = async () => {
     const unfinished = tasks.filter((task) => !task.completed);
     if (!unfinished.length) return;
-    Alert.alert('Орындалмаған істерді көшіру керек пе?', `${unfinished.length} тапсырма ${addLocalDays(date, 1)} күніне көшеді.`, [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Көшіру', onPress: () => { void Promise.all(unfinished.map((task) => moveTask(db, task, addLocalDays(date, 1)))).then(refresh); } }]);
+    setCarryConfirm(true);
   };
 
   return <AppScreen title="Күн жоспары" subtitle={`${tasks.length} тапсырма · ${done} орындалды`} right={<TouchableOpacity onPress={() => router.push('/tasks')} style={styles.headerButton} accessibilityRole="button" accessibilityLabel="Барлық тапсырманы ашу"><ListTodo size={18} color={colors.ink} /></TouchableOpacity>}>
@@ -59,7 +64,7 @@ function PlannerForDate({ initialDate, notebookId }: { initialDate: string; note
     <View style={styles.tasksHeader}><Text style={styles.sectionTitle}>Істер тізімі</Text><Text style={styles.count}>{tasks.length} тапсырма</Text></View>
     {tasks.length ? tasks.map((task, index) => <Card key={task.id} style={[styles.taskCard, task.completed ? styles.doneCard : null]}>
       <TouchableOpacity onPress={() => void updateTask(db, task.id, { completed: !task.completed }).then(refresh)} style={styles.checkButton} accessibilityRole="checkbox" accessibilityState={{ checked: task.completed }} accessibilityLabel={task.completed ? 'Орындалған тапсырма' : 'Тапсырманы орындау'}>{task.completed ? <CheckCircle2 size={23} color={colors.green} /> : <Circle size={23} color="#C6B7A5" />}</TouchableOpacity>
-      <TouchableOpacity style={{ flex: 1 }} onPress={() => openEdit(task)} onLongPress={() => Alert.alert(task.title, 'Тапсырманы өшіру керек пе?', [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Өшіру', style: 'destructive', onPress: () => { void deleteTask(db, task.id).then(refresh); } }])}>
+      <TouchableOpacity style={{ flex: 1, minHeight: 48, justifyContent: 'center' }} onPress={() => openEdit(task)} onLongPress={() => setDeleteTaskTarget(task)} accessibilityRole="button" accessibilityLabel={`${task.title}, өңдеу. Ұзақ басып өшіру`}>
         <Text style={[styles.taskTitle, task.completed ? styles.taskTitleDone : null]}>{task.title}</Text><View style={styles.taskMeta}>{task.dueTime ? <View style={styles.timeRow}><Clock3 size={12} color={colors.muted} /><Text style={styles.timeText}>{task.dueTime}</Text></View> : null}{task.priority ? <View style={styles.priorityRow}><Star size={12} color="#B7864A" fill="#B7864A" /><Text style={styles.priorityText}>Маңызды</Text></View> : null}</View>
       </TouchableOpacity>
       <View style={styles.orderButtons}><TouchableOpacity onPress={() => void reorderTask(db, date, task.id, -1).then(refresh)} disabled={index === 0} accessibilityLabel="Жоғары жылжыту"><ArrowLeft size={15} color={index === 0 ? '#D9D1C9' : colors.muted} style={{ transform: [{ rotate: '90deg' }] }} /></TouchableOpacity><TouchableOpacity onPress={() => void reorderTask(db, date, task.id, 1).then(refresh)} disabled={index === tasks.length - 1} accessibilityLabel="Төмен жылжыту"><ArrowRight size={15} color={index === tasks.length - 1 ? '#D9D1C9' : colors.muted} style={{ transform: [{ rotate: '90deg' }] }} /></TouchableOpacity></View>
@@ -68,7 +73,9 @@ function PlannerForDate({ initialDate, notebookId }: { initialDate: string; note
     {tasks.some((task) => !task.completed) ? <TouchableOpacity style={styles.carry} onPress={carryForward}><CopyPlus size={16} color={colors.accent} /><Text style={styles.carryText}>Орындалмағанды ертеңге көшіру</Text></TouchableOpacity> : null}
     <TouchableOpacity onPress={() => router.push('/statistics')} style={styles.history}><Text style={styles.historyText}>Тапсырмалар тарихы мен статистика</Text><ArrowRight size={15} color={colors.accent} /></TouchableOpacity>
 
-    <Modal visible={modal} transparent animationType="fade" onRequestClose={() => setModal(false)}><View style={styles.modalShade}><View style={styles.modalCard}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{editing ? 'Тапсырманы өзгерту' : 'Жаңа тапсырма'}</Text><TouchableOpacity onPress={() => setModal(false)}><X size={19} color={colors.muted} /></TouchableOpacity></View><TextField label="Іс атауы" value={title} onChangeText={setTitle} placeholder="Мысалы, 20 минут кітап оқу" autoFocus onSubmitEditing={() => void save()} /><TextField label="Уақыты (қалауыңызша)" value={time} onChangeText={setTime} placeholder="09:30" keyboardType="numbers-and-punctuation" maxLength={5} /><TouchableOpacity onPress={() => setPriority((v) => v ? 0 : 1)} style={styles.priorityToggle}><Star size={16} color={priority ? '#B7864A' : colors.muted} fill={priority ? '#B7864A' : 'transparent'} /><Text style={{ color: colors.ink, fontSize: 13 }}>Маңызды тапсырма</Text><View style={[styles.switch, priority ? styles.switchOn : null]}><View style={[styles.switchKnob, priority ? styles.switchKnobOn : null]} /></View></TouchableOpacity><PrimaryButton title={saving ? 'Сақталуда…' : 'Сақтау'} onPress={() => void save()} disabled={saving} /></View></View></Modal>
+    <LumiDialog visible={modal} title={editing ? 'Тапсырманы өзгерту' : 'Жаңа тапсырма'} onClose={() => setModal(false)}><TextField label="Іс атауы" value={title} onChangeText={setTitle} placeholder="Мысалы, 20 минут кітап оқу" autoFocus onSubmitEditing={() => void save()} /><TextField label="Уақыты (қалауыңызша)" value={time} onChangeText={setTime} placeholder="09:30" keyboardType="numbers-and-punctuation" maxLength={5} /><TouchableOpacity onPress={() => setPriority((v) => v ? 0 : 1)} style={styles.priorityToggle}><Star size={16} color={priority ? '#B7864A' : colors.muted} fill={priority ? '#B7864A' : 'transparent'} /><Text style={{ color: colors.ink, fontSize: 13 }}>Маңызды тапсырма</Text><View style={[styles.switch, priority ? styles.switchOn : null]}><View style={[styles.switchKnob, priority ? styles.switchKnobOn : null]} /></View></TouchableOpacity><PrimaryButton title={saving ? 'Сақталуда…' : 'Сақтау'} onPress={() => void save()} disabled={saving} /></LumiDialog>
+    <LumiConfirmDialog visible={Boolean(deleteTaskTarget)} title="Тапсырманы өшіру керек пе?" message={deleteTaskTarget?.title ?? ''} confirmLabel="Өшіру" onClose={() => setDeleteTaskTarget(null)} onConfirm={() => { const target = deleteTaskTarget; setDeleteTaskTarget(null); if (target) void deleteTask(db, target.id).then(refresh); }} />
+    <LumiConfirmDialog visible={carryConfirm} title="Істерді ертеңге көшіру керек пе?" message={`${tasks.filter((task) => !task.completed).length} аяқталмаған тапсырма ${addLocalDays(date, 1)} күніне көшіріледі.`} confirmLabel="Көшіру" onClose={() => setCarryConfirm(false)} onConfirm={() => { setCarryConfirm(false); void Promise.all(tasks.filter((task) => !task.completed).map((task) => moveTask(db, task, addLocalDays(date, 1)))).then(refresh); }} />
   </AppScreen>;
 }
 

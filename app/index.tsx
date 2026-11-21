@@ -1,5 +1,6 @@
+import { ThemedView as View } from '@/components/ui';
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { readSetting } from '@/database/settings';

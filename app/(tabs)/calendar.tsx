@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, Circle, Languages } from 'lucide-react-native';
-import { AppScreen, Card, colors } from '@/components/ui';
+import { AppScreen, Card, colors, useAppAppearance, ThemedText as Text, ThemedView as View } from '@/components/ui';
 import { localDate } from '@/utils/core';
 
 type DayActivity = { entries: string[]; tasks: number; completed: number; reviews: number };
@@ -11,6 +11,7 @@ const weekDays = ['Дс', 'Сс', 'Ср', 'Бс', 'Жм', 'Сб', 'Жс'];
 
 export default function CalendarScreen() {
   const db = useSQLiteContext();
+  const { palette } = useAppAppearance();
   const [month, setMonth] = useState(() => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; });
   const [activity, setActivity] = useState<Record<string, DayActivity>>({});
   const [selected, setSelected] = useState(localDate());
@@ -40,15 +41,15 @@ export default function CalendarScreen() {
   const selectedActivity = activity[selected] ?? { entries: [], tasks: 0, completed: 0, reviews: 0 };
   const monthLabel = new Intl.DateTimeFormat('kk-KZ', { month: 'long', year: 'numeric' }).format(new Date(`${month}-15T12:00:00`));
 
-  return <AppScreen title="Күнтізбе" subtitle="Ойлар мен істердің ізі" right={<TouchableOpacity style={styles.todayButton} onPress={() => { setMonth(localDate().slice(0, 7)); setSelected(localDate()); }}><Text style={styles.todayText}>Бүгін</Text></TouchableOpacity>}>
+  return <AppScreen title="Күнтізбе" subtitle={`${Object.values(activity).filter((item) => item.entries.length).length} күнде жазба бар`} right={<TouchableOpacity style={[styles.todayButton, { backgroundColor: palette.accentSoft }]} onPress={() => { setMonth(localDate().slice(0, 7)); setSelected(localDate()); }} accessibilityRole="button"><Text style={[styles.todayText, { color: palette.ink }]}>Бүгін</Text></TouchableOpacity>}>
     <Card style={styles.calendarCard}>
-      <View style={styles.monthBar}><TouchableOpacity onPress={() => moveMonth(-1)} style={styles.monthArrow}><ArrowLeft size={17} color={colors.ink} /></TouchableOpacity><Text style={styles.monthTitle}>{monthLabel}</Text><TouchableOpacity onPress={() => moveMonth(1)} style={styles.monthArrow}><ArrowRight size={17} color={colors.ink} /></TouchableOpacity></View>
+      <View style={styles.monthBar}><TouchableOpacity onPress={() => moveMonth(-1)} style={[styles.monthArrow, { backgroundColor: palette.accentSoft }]} accessibilityLabel="Алдыңғы ай"><ArrowLeft size={17} color={palette.ink} /></TouchableOpacity><Text style={[styles.monthTitle, { color: palette.ink }]}>{monthLabel}</Text><TouchableOpacity onPress={() => moveMonth(1)} style={[styles.monthArrow, { backgroundColor: palette.accentSoft }]} accessibilityLabel="Келесі ай"><ArrowRight size={17} color={palette.ink} /></TouchableOpacity></View>
       <View style={styles.grid}>{weekDays.map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
       <View style={styles.grid}>{calendarDays.map((day, index) => {
         if (day === null) return <View key={`blank-${index}`} style={styles.dayCell} />;
         const date = `${month}-${String(day).padStart(2, '0')}`; const item = activity[date]; const isToday = date === localDate(); const isSelected = date === selected;
         return <TouchableOpacity key={date} onPress={() => setSelected(date)} onLongPress={() => router.replace({ pathname: '/(tabs)/journal', params: { date } })} style={styles.dayCell} accessibilityRole="button" accessibilityLabel={`${date}${item ? ', белсенділік бар' : ''}`}>
-          <View style={[styles.dayNumber, isToday ? styles.todayCircle : null, isSelected ? styles.selectedCircle : null]}><Text style={[styles.dayText, isSelected ? { color: '#FFF9F1' } : null, isToday && !isSelected ? { color: colors.accent, fontWeight: '800' } : null]}>{day}</Text></View>
+          <View style={[styles.dayNumber, isToday ? styles.todayCircle : null, isSelected ? styles.selectedCircle : null, !isSelected ? { backgroundColor: palette.accentSoft } : null]}><Text style={[styles.dayText, { color: palette.ink }, isSelected ? { color: '#FFF9F1' } : null, isToday && !isSelected ? { color: palette.accent, fontWeight: '800' } : null]}>{day}</Text></View>
           <View style={styles.dots}>{item?.entries.length ? <View style={[styles.dot, { backgroundColor: isSelected ? '#F5DDAF' : '#A76B45' }]} /> : null}{item?.tasks ? <View style={[styles.dot, { backgroundColor: isSelected ? '#D7E5D6' : '#638267' }]} /> : null}{item?.reviews ? <View style={[styles.dot, { backgroundColor: isSelected ? '#DAD5EC' : '#85749F' }]} /> : null}{moods[date] ? <Text style={styles.moodTiny}>{moods[date]}</Text> : null}</View>
         </TouchableOpacity>;
       })}</View>

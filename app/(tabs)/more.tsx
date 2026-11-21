@@ -1,7 +1,7 @@
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { BarChart3, CalendarDays, CircleHelp, Search, Settings2, ShieldCheck, Sparkles } from 'lucide-react-native';
-import { AppScreen, Card, colors } from '@/components/ui';
+import { AppScreen, Card, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 
 const links = [
   { title: 'Күнтізбе', subtitle: 'Жазбалар, істер және көңіл күй', icon: CalendarDays, route: '/calendar', tint: '#F2E6D9' },
@@ -11,6 +11,7 @@ const links = [
 ] as const;
 
 export default function MoreScreen() {
+  useAppAppearance();
   return <AppScreen title="Жеке кеңістік" subtitle="LUMI • жергілікті кітапхана">
     <Card style={styles.banner} color="#4B3028"><View style={styles.bannerStar}><Sparkles size={19} color="#E3C58F" /></View><Text style={styles.bannerTitle}>Өзіңізге тиесілі{ '\n' }жеке әлем</Text><Text style={styles.bannerSub}>Сөздеріңіз бен ойларыңыз осы құрылғыда қалады.</Text><View style={styles.bannerPrivacy}><ShieldCheck size={14} color="#E3C58F" /><Text style={styles.privacyText}>Офлайн • жеке • жарнамасыз</Text></View></Card>
     <Text style={styles.section}>Құралдар</Text>

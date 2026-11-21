@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Switch, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { BookHeart, Check, Fingerprint, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react-native';
-import { AppScreen, Card, PrimaryButton, TextField, colors } from '@/components/ui';
+import { AppScreen, Card, PrimaryButton, TextField, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 import { themes, themeIds } from '@/themes/registry';
 import type { ThemeId } from '@/types/models';
 import { setBiometricEnabled, setPin } from '@/services/security';
@@ -12,6 +12,7 @@ import { writeSetting } from '@/database/settings';
 import { updateNotebook } from '@/database/repository';
 
 export default function OnboardingScreen() {
+  useAppAppearance();
   const db = useSQLiteContext();
   const [theme, setTheme] = useState<ThemeId>('classic');
   const [pin, setPinValue] = useState('');

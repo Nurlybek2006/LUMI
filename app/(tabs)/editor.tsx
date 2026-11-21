@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { BookOpen, ChevronRight, Edit3, FilePlus2, Languages } from 'lucide-react-native';
-import { AppScreen, Card, colors } from '@/components/ui';
+import { AppScreen, Card, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 import { listEntries, listNotebookPages, listNotebooks } from '@/database/repository';
 import { getTheme } from '@/themes/registry';
 import type { Entry, Notebook, NotebookPage } from '@/types/models';
@@ -12,6 +12,7 @@ const typeLabels = { general: 'Жалпы дәптер', journal: 'Күндел�
 type NotebookWithPages = { book: Notebook; pages: NotebookPage[]; entries: Entry[] };
 
 export default function EditorHome() {
+  useAppAppearance();
   const db = useSQLiteContext(); const [items, setItems] = useState<NotebookWithPages[]>([]);
   const refresh = useCallback(async () => {
     const books = await listNotebooks(db);

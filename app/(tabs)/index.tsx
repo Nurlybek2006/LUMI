@@ -1,15 +1,16 @@
 import { useCallback, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { BookHeart, BookOpen, BookOpenCheck, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Code2, Flame, Languages, Lightbulb, Plus, Search, Sunrise, X } from 'lucide-react-native';
-import { AppScreen, Card, PrimaryButton, SectionTitle, TextField, colors, useAppAppearance } from '@/components/ui';
+import { BookHeart, BookOpen, BookOpenCheck, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Code2, Flame, Languages, Lightbulb, Plus, Search, Sunrise } from 'lucide-react-native';
+import { AppScreen, Card, PrimaryButton, SectionTitle, TextField, colors, useAppAppearance, ThemedText as Text, ThemedView as View } from '@/components/ui';
 import { getStats, listEntries, listNotebookPages, listNotebooks, listTasks, listWords, createNotebook, deleteNotebook, reorderNotebook, updateNotebook } from '@/database/repository';
 import { getTheme, themeIds, themes } from '@/themes/registry';
 import { localDate, addLocalDays } from '@/utils/core';
 import { readSetting } from '@/database/settings';
 import { pruneUnusedMedia } from '@/services/media';
 import type { Notebook, NotebookType, ThemeId } from '@/types/models';
+import { LumiActionSheet, LumiConfirmDialog, LumiDialog } from '@/components/LumiModal';
 
 export default function LibraryScreen() {
   const db = useSQLiteContext();
@@ -24,6 +25,8 @@ export default function LibraryScreen() {
   const [title, setTitle] = useState('');
   const [theme, setTheme] = useState<ThemeId>('warm');
   const [notebookType, setNotebookType] = useState<NotebookType>('general');
+  const [manageOpen, setManageOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const refresh = useCallback(async () => {
     const [books, counts, tasks, entries, words] = await Promise.all([listNotebooks(db), getStats(db), listTasks(db, addLocalDays(localDate(), 1)), listEntries(db), listWords(db)]);
@@ -44,12 +47,7 @@ export default function LibraryScreen() {
 
   const openCreate = () => { setTitle(''); setNotebookType('general'); void readSetting(db, 'default_theme').then((value) => setTheme((value as ThemeId) || 'warm')); setModal('create'); };
   const bookIcons: Record<string, typeof BookOpen> = { 'book-heart': BookHeart, 'calendar-days': CalendarDays, languages: Languages, lightbulb: Lightbulb, 'code-2': Code2 };
-  const openManage = (book: Notebook) => Alert.alert(book.title, 'Дәптерді өзгерту', [
-    { text: 'Атын өзгерту', onPress: () => { setTarget(book); setTitle(book.title); setModal('rename'); } },
-    { text: 'Тақырыбын таңдау', onPress: () => { setTarget(book); setTheme(book.themeId); setModal('theme'); } },
-    { text: 'Жою', style: 'destructive', onPress: () => Alert.alert('Дәптерді жою керек пе?', 'Ішіндегі барлық жазбалар да өшеді.', [{ text: 'Болдырмау', style: 'cancel' }, { text: 'Жою', style: 'destructive', onPress: () => { void deleteNotebook(db, book.id).then(async () => { try { await pruneUnusedMedia(db); } catch { /* The notebook deletion is already complete. */ } await refresh(); }); } }]) },
-    { text: 'Жабу', style: 'cancel' }
-  ]);
+  const openManage = (book: Notebook) => { setTarget(book); setManageOpen(true); };
   const saveModal = async () => {
     if (modal === 'create') { if (!title.trim()) return; const id = await createNotebook(db, title, theme, notebookType); setModal(null); await refresh(); router.push({ pathname: '/notebook/[id]', params: { id } }); }
     if (modal === 'rename' && target) { if (!title.trim()) return; await updateNotebook(db, target.id, { title }); setModal(null); await refresh(); }
@@ -57,8 +55,8 @@ export default function LibraryScreen() {
   };
 
   return <AppScreen title="Кітап сөресі" subtitle="Жеке кітапханаңыз" right={<View style={{ flexDirection: 'row', gap: 7 }}><TouchableOpacity onPress={() => appearance.setMode(appearance.palette.background === '#181715' ? 'light' : 'dark')} style={styles.searchButton} accessibilityRole="button" accessibilityLabel="Ашық немесе қараңғы көріністі ауыстыру"><Text style={{ fontSize: 18, color: colors.accent }}>{appearance.palette.background === '#181715' ? '☼' : '☾'}</Text></TouchableOpacity><TouchableOpacity onPress={() => router.push('/search')} style={styles.searchButton}><Search size={19} color={colors.ink} /></TouchableOpacity></View>}>
-    <View style={styles.greeting}><View><Text style={styles.eyebrow}>{new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</Text><Text style={styles.greetTitle}>Қош келдіңіз ✨</Text></View></View>
-    <Card style={styles.streakCard} color="#EDE3D5"><View style={styles.streakLeft}><View style={styles.flame}><Flame size={20} color="#A76843" /></View><View><Text style={styles.streakNum}>{stats.streak} күндік серпін</Text><Text style={styles.streakSub}>Бүгінгі ойыңызды жазып қойыңыз</Text></View></View><Text style={styles.streakMark}>✦</Text></Card>
+    <View style={styles.greeting}><View><Text style={styles.eyebrow}>{new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</Text><Text style={styles.greetTitle}>Жеке кітапхана</Text></View></View>
+    <Card style={styles.streakCard} color="#EDE3D5"><View style={styles.streakLeft}><View style={styles.flame}><Flame size={20} color="#A76843" /></View><View><Text style={styles.streakNum}>{stats.streak} күн қатарынан жазба</Text><Text style={styles.streakSub}>Бүгінгі жазба: {stats.entries} · сөздік: {stats.words}</Text></View></View><Text style={styles.streakMark}>✦</Text></Card>
 
     <View style={styles.quickRow}>
       <TouchableOpacity style={[styles.quickCard, { backgroundColor: '#EDE3D5' }]} onPress={() => router.push({ pathname: '/(tabs)/journal', params: { date: localDate() } })} accessibilityRole="button" accessibilityLabel="Бүгінгі күнделік жазбасын ашу">
@@ -82,23 +80,27 @@ export default function LibraryScreen() {
     </ScrollView>
     <View style={styles.shelfLine} />
 
-    <SectionTitle title="Күннің кішкентай жоспары" action="Барлығы" onAction={() => router.push('/(tabs)/planner')} />
+    <SectionTitle title="Ертеңгі жоспар" action="Барлығы" onAction={() => router.push('/(tabs)/planner')} />
     <Card style={styles.planCard}>
       <View style={styles.planHeader}><View style={styles.sunrise}><Sunrise size={18} color="#B17850" /></View><View style={{ flex: 1 }}><Text style={styles.planTitle}>Ертеңге дайындық</Text><Text style={styles.planDate}>{new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long' }).format(addLocalDaysToDate(1))}</Text></View><TouchableOpacity onPress={() => router.push('/(tabs)/planner')}><ChevronRight size={18} color={colors.muted} /></TouchableOpacity></View>
-      {tomorrowTasks.length ? tomorrowTasks.map((task, index) => <View style={styles.taskPreview} key={`${task.title}-${index}`}><View style={[styles.taskDot, task.completed ? styles.taskComplete : null]} /><Text style={[styles.taskText, task.completed ? { textDecorationLine: 'line-through', color: colors.muted } : null]} numberOfLines={1}>{task.title}</Text></View>) : <Text style={styles.planEmpty}>Ертеңге ойыңызды түртіп қойыңыз</Text>}
+      {tomorrowTasks.length ? tomorrowTasks.map((task, index) => <View style={styles.taskPreview} key={`${task.title}-${index}`}><View style={[styles.taskDot, task.completed ? styles.taskComplete : null]} /><Text style={[styles.taskText, task.completed ? { textDecorationLine: 'line-through', color: colors.muted } : null]} numberOfLines={1}>{task.title}</Text></View>) : <Text style={styles.planEmpty}>Ертеңге жоспарланған іс жоқ</Text>}
       <TouchableOpacity onPress={() => router.push('/(tabs)/planner')} style={styles.planAdd}><Plus size={15} color={colors.accent} /><Text style={styles.planAddText}>Жоспарды ашу</Text></TouchableOpacity>
     </Card>
     <View style={styles.footerStats}><View style={styles.footerStat}><Text style={styles.statValue}>{stats.entries}</Text><Text style={styles.statLabel}>жазба</Text></View><View style={styles.statDivider} /><View style={styles.footerStat}><Text style={styles.statValue}>{stats.words}</Text><Text style={styles.statLabel}>сөз</Text></View><View style={styles.statDivider} /><View style={styles.footerStat}><Text style={styles.statValue}>{stats.tasksDone}</Text><Text style={styles.statLabel}>аяқталған іс</Text></View></View>
     <Text style={styles.privacy}>Жеке кеңістік • құрылғыда сақталады</Text>
 
-    <Modal visible={modal !== null} transparent animationType="fade" onRequestClose={() => setModal(null)}>
-      <View style={styles.modalShade}><View style={styles.modalCard}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{modal === 'create' ? 'Жаңа дәптер' : modal === 'rename' ? 'Дәптердің атауы' : 'Дәптер тақырыбы'}</Text><TouchableOpacity onPress={() => setModal(null)}><X size={20} color={colors.muted} /></TouchableOpacity></View>
+    <LumiDialog visible={modal !== null} title={modal === 'create' ? 'Жаңа дәптер' : modal === 'rename' ? 'Дәптердің атауы' : 'Дәптер тақырыбы'} onClose={() => setModal(null)}>
         {modal !== 'theme' ? <TextField label="Атауы" value={title} onChangeText={setTitle} placeholder="Мысалы, Саяхаттар" autoFocus /> : null}
         {modal === 'create' ? <View><Text style={styles.themeLabel}>Дәптер түрі</Text><View style={styles.themeGrid}>{([['general', 'Жалпы дәптер'], ['journal', 'Күнделік'], ['vocabulary', 'Сөздік'], ['planner', 'Жоспар']] as const).map(([type, label]) => <TouchableOpacity key={type} onPress={() => setNotebookType(type)} style={[{ paddingHorizontal: 11, paddingVertical: 9, borderRadius: 11, backgroundColor: '#EFE8DE', borderWidth: 1, borderColor: 'transparent' }, notebookType === type ? { backgroundColor: '#E8D7C2', borderColor: colors.accent } : null]}><Text style={[{ color: colors.muted, fontSize: 11, fontWeight: '600' }, notebookType === type ? { color: colors.ink, fontWeight: '700' } : null]}>{label}</Text></TouchableOpacity>)}</View></View> : null}
         {(modal === 'theme' || modal === 'create') ? <View><Text style={styles.themeLabel}>Тақырып</Text><View style={styles.themeGrid}>{themeIds.map((id) => { const item = themes[id]; return <TouchableOpacity key={id} onPress={() => setTheme(id)} style={[styles.themeChip, { backgroundColor: item.cover, borderColor: theme === id ? item.accent : 'transparent' }]}><Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>{item.ornament}  {item.name}</Text></TouchableOpacity>; })}</View></View> : null}
         <PrimaryButton title={modal === 'theme' ? 'Тақырыпты сақтау' : 'Дәптерді сақтау'} onPress={() => void saveModal()} style={{ marginTop: 18 }} />
-      </View></View>
-    </Modal>
+    </LumiDialog>
+    <LumiActionSheet visible={manageOpen} title={target?.title ?? 'Дәптер баптаулары'} onClose={() => setManageOpen(false)} actions={[
+      { label: 'Атын өзгерту', onPress: () => { setManageOpen(false); if (target) { setTitle(target.title); setModal('rename'); } } },
+      { label: 'Тақырыбын таңдау', onPress: () => { setManageOpen(false); if (target) { setTheme(target.themeId); setModal('theme'); } } },
+      { label: 'Дәптерді жою', destructive: true, onPress: () => { setManageOpen(false); setDeleteConfirm(true); } }
+    ]} />
+    <LumiConfirmDialog visible={deleteConfirm} title="Дәптерді жою керек пе?" message="Дәптер ішіндегі жазбалар мен беттер де өшіріледі. Бұл әрекетті қайтару мүмкін емес." confirmLabel="Дәптерді жою" onClose={() => setDeleteConfirm(false)} onConfirm={() => { const book = target; setDeleteConfirm(false); if (book) void deleteNotebook(db, book.id).then(async () => { try { await pruneUnusedMedia(db); } catch { /* Дәптер өшірілді; медиа тазалау бөлек орындалады. */ } await refresh(); }); }} />
   </AppScreen>;
 }
 
