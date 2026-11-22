@@ -45,3 +45,19 @@ test('task completion and vocabulary review history persist in SQLite', () => {
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM vocabulary_reviews').get()?.count, 1);
   } finally { db.close(); }
 });
+
+test('calendar range queries return only real SQLite journal entries and scheduled/completed tasks for selected dates', () => {
+  const db = freshDb();
+  try {
+    const now = '2024-02-29T12:00:00.000Z';
+    db.prepare('INSERT INTO notebooks(id,title,icon,theme_id,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('calendar-diary', 'Күнделік', 'book', 'classic', 0, now, now);
+    db.prepare('INSERT INTO entries(id,notebook_id,entry_date,title,content,blocks_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('calendar-entry', 'calendar-diary', '2024-02-29', 'Жазба', 'Мәтін', '[]', '[]', now, now);
+    db.prepare('INSERT INTO tasks(id,task_date,title,completed,due_time,sort_order,created_at) VALUES(?,?,?,?,?,?,?)').run('calendar-open-task', '2024-02-29', 'Оқу', 0, '09:30', 0, now);
+    db.prepare('INSERT INTO tasks(id,task_date,title,completed,due_time,sort_order,created_at) VALUES(?,?,?,?,?,?,?)').run('calendar-done-task', '2024-03-01', 'Жазу', 1, null, 0, now);
+    const entries = db.prepare('SELECT id,entry_date,title,notebook_id FROM entries WHERE entry_date BETWEEN ? AND ? ORDER BY entry_date,updated_at DESC').all('2024-02-26', '2024-03-03');
+    const tasks = db.prepare('SELECT id,task_date,title,completed,due_time,notebook_id FROM tasks WHERE task_date BETWEEN ? AND ? ORDER BY task_date,sort_order,created_at').all('2024-02-26', '2024-03-03');
+    assert.deepEqual(entries.map((row) => [row.id, row.entry_date, row.notebook_id]), [['calendar-entry', '2024-02-29', 'calendar-diary']]);
+    assert.deepEqual(tasks.map((row) => [row.id, row.task_date, row.completed]), [['calendar-open-task', '2024-02-29', 0], ['calendar-done-task', '2024-03-01', 1]]);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM tasks WHERE task_date=? AND completed=1').get('2024-02-29')?.count, 0);
+  } finally { db.close(); }
+});

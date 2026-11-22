@@ -54,16 +54,16 @@ export default function LibraryScreen() {
     if (modal === 'theme' && target) { await updateNotebook(db, target.id, { themeId: theme }); setModal(null); await refresh(); }
   };
 
-  return <AppScreen title="Кітап сөресі" subtitle="Жеке кітапханаңыз" right={<View style={{ flexDirection: 'row', gap: 7 }}><TouchableOpacity onPress={() => appearance.setMode(appearance.palette.background === '#181715' ? 'light' : 'dark')} style={styles.searchButton} accessibilityRole="button" accessibilityLabel="Ашық немесе қараңғы көріністі ауыстыру"><Text style={{ fontSize: 18, color: colors.accent }}>{appearance.palette.background === '#181715' ? '☼' : '☾'}</Text></TouchableOpacity><TouchableOpacity onPress={() => router.push('/search')} style={styles.searchButton}><Search size={19} color={colors.ink} /></TouchableOpacity></View>}>
+  return <AppScreen title="Кітап сөресі" subtitle="Жеке кітапханаңыз" right={<View style={{ flexDirection: 'row', gap: 7 }}><TouchableOpacity onPress={() => appearance.setMode(appearance.mode === 'dark' ? 'light' : 'dark')} style={[styles.searchButton, { backgroundColor: appearance.palette.iconContainer }]} accessibilityRole="button" accessibilityLabel="Ашық немесе қараңғы көріністі ауыстыру"><Text style={{ fontSize: 18, color: appearance.palette.icon }}>{appearance.palette.background === '#181715' ? '☼' : '☾'}</Text></TouchableOpacity><TouchableOpacity onPress={() => router.push('/search')} style={[styles.searchButton, { backgroundColor: appearance.palette.iconContainer }]}><Search size={19} color={appearance.palette.icon} /></TouchableOpacity></View>}>
     <View style={styles.greeting}><View><Text style={styles.eyebrow}>{new Intl.DateTimeFormat('kk-KZ', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</Text><Text style={styles.greetTitle}>Жеке кітапхана</Text></View></View>
     <Card style={styles.streakCard} color="#EDE3D5"><View style={styles.streakLeft}><View style={styles.flame}><Flame size={20} color="#A76843" /></View><View><Text style={styles.streakNum}>{stats.streak} күн қатарынан жазба</Text><Text style={styles.streakSub}>Бүгінгі жазба: {stats.entries} · сөздік: {stats.words}</Text></View></View><Text style={styles.streakMark}>✦</Text></Card>
 
     <View style={styles.quickRow}>
-      <TouchableOpacity style={[styles.quickCard, { backgroundColor: '#EDE3D5' }]} onPress={() => router.push({ pathname: '/(tabs)/journal', params: { date: localDate() } })} accessibilityRole="button" accessibilityLabel="Бүгінгі күнделік жазбасын ашу">
-        <BookHeart size={19} color={colors.accent} /><Text style={styles.quickTitle}>Бүгінгі жазба</Text><Text style={styles.quickSubtitle}>Күнделікке өту</Text>
+      <TouchableOpacity style={[styles.quickCard, { backgroundColor: appearance.palette.accentSurface }]} onPress={() => router.push({ pathname: '/(tabs)/journal', params: { date: localDate() } })} accessibilityRole="button" accessibilityLabel="Бүгінгі күнделік жазбасын ашу">
+        <BookHeart size={19} color={appearance.palette.accent} /><Text style={styles.quickTitle}>Бүгінгі жазба</Text><Text style={styles.quickSubtitle}>Күнделікке өту</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={[styles.quickCard, { backgroundColor: '#E8ECE2' }]} onPress={() => router.push(dueWords ? '/review' : '/(tabs)/vocabulary')} accessibilityRole="button" accessibilityLabel={dueWords ? `${dueWords} сөзді қайталау` : 'Сөздікке өту'}>
-        <BookOpenCheck size={19} color={colors.green} /><Text style={styles.quickTitle}>{dueWords ? `${dueWords} сөз дайын` : 'Сөздік'}</Text><Text style={styles.quickSubtitle}>{dueWords ? 'Қайталауды бастау' : 'Жаңа сөз қосу'}</Text>
+      <TouchableOpacity style={[styles.quickCard, { backgroundColor: appearance.palette.accentSurface }]} onPress={() => router.push(dueWords ? '/review' : '/(tabs)/vocabulary')} accessibilityRole="button" accessibilityLabel={dueWords ? `${dueWords} сөзді қайталау` : 'Сөздікке өту'}>
+        <BookOpenCheck size={19} color={appearance.palette.green} /><Text style={styles.quickTitle}>{dueWords ? `${dueWords} сөз дайын` : 'Сөздік'}</Text><Text style={styles.quickSubtitle}>{dueWords ? 'Қайталауды бастау' : 'Жаңа сөз қосу'}</Text>
       </TouchableOpacity>
     </View>
 

@@ -144,11 +144,11 @@ function JournalEditor({ initialDate, requestedNotebookId }: { initialDate: stri
   };
 
   const theme = getTheme(themeId);
-  return <AppScreen title="Күнделік" subtitle={saveState} themeId={themeId} right={<TouchableOpacity style={styles.iconButton} onPress={() => router.push('/calendar')}><CalendarDays size={19} color={colors.ink} /></TouchableOpacity>} scroll={false} contentStyle={{ paddingHorizontal: 15, paddingBottom: 0 }}>
+  return <AppScreen title="Күнделік" subtitle={saveState} themeId={themeId} right={<TouchableOpacity style={styles.iconButton} onPress={() => router.push({ pathname: '/(tabs)/calendar', params: { date } })}><CalendarDays size={19} color={colors.ink} /></TouchableOpacity>} scroll={false} contentStyle={{ paddingHorizontal: 15, paddingBottom: 0 }}>
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={8}>
       <View style={styles.dateBar}>
         <TouchableOpacity onPress={() => void changeDate(addLocalDays(date, -1))} style={styles.dateArrow}><ArrowLeft size={18} color={colors.ink} /></TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/calendar')} style={styles.dateCenter}><Text style={styles.dateText}>{dateLabel}</Text><Text style={styles.dateSub}>{date === localDate() ? 'Бүгінгі бет' : 'Күнді ауыстыру үшін күнтізбені ашыңыз'}</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push({ pathname: '/(tabs)/calendar', params: { date } })} style={styles.dateCenter}><Text style={styles.dateText}>{dateLabel}</Text><Text style={styles.dateSub}>{date === localDate() ? 'Бүгінгі бет' : 'Күнді ауыстыру үшін күнтізбені ашыңыз'}</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => void changeDate(addLocalDays(date, 1))} style={styles.dateArrow} accessibilityLabel="Келесі күн"><ArrowRight size={18} color={colors.ink} /></TouchableOpacity>
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">

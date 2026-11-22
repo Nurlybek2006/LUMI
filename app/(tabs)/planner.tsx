@@ -11,19 +11,19 @@ import { LumiConfirmDialog, LumiDialog } from '@/components/LumiModal';
 
 export default function PlannerScreen() {
   useAppAppearance();
-  const params = useLocalSearchParams<{ date?: string; notebookId?: string }>();
+  const params = useLocalSearchParams<{ date?: string; notebookId?: string; add?: string }>();
   const initialDate = typeof params.date === 'string' ? params.date : localDate();
   const notebookId = typeof params.notebookId === 'string' ? params.notebookId : 'plans';
-  return <PlannerForDate key={`${initialDate}:${notebookId}`} initialDate={initialDate} notebookId={notebookId} />;
+  return <PlannerForDate key={`${initialDate}:${notebookId}:${params.add ?? ''}`} initialDate={initialDate} notebookId={notebookId} openAddOnMount={params.add === '1'} />;
 }
 
-function PlannerForDate({ initialDate, notebookId }: { initialDate: string; notebookId: string }) {
-  useAppAppearance();
+function PlannerForDate({ initialDate, notebookId, openAddOnMount }: { initialDate: string; notebookId: string; openAddOnMount: boolean }) {
+  const { palette } = useAppAppearance();
   const db = useSQLiteContext();
   const router = useRouter();
   const [date, setDate] = useState(initialDate);
   const [tasks, setTasks] = useState<PlannerTask[]>([]);
-  const [modal, setModal] = useState(false);
+  const [modal, setModal] = useState(openAddOnMount);
   const [editing, setEditing] = useState<PlannerTask | null>(null);
   const [title, setTitle] = useState('');
   const [time, setTime] = useState('');
@@ -57,10 +57,10 @@ function PlannerForDate({ initialDate, notebookId }: { initialDate: string; note
     setCarryConfirm(true);
   };
 
-  return <AppScreen title="Күн жоспары" subtitle={`${tasks.length} тапсырма · ${done} орындалды`} right={<TouchableOpacity onPress={() => router.push('/tasks')} style={styles.headerButton} accessibilityRole="button" accessibilityLabel="Барлық тапсырманы ашу"><ListTodo size={18} color={colors.ink} /></TouchableOpacity>}>
-    <View style={styles.daySwitch}><TouchableOpacity onPress={() => stepDate(-1)} style={styles.dayArrow}><ArrowLeft size={18} color={colors.ink} /></TouchableOpacity><View style={styles.dayTitleWrap}><Text style={styles.dayTitle}>{dateTitle}</Text><Text style={styles.dayDate}>{new Intl.DateTimeFormat('kk-KZ', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${date}T12:00:00`))}</Text></View><TouchableOpacity onPress={() => stepDate(1)} style={styles.dayArrow} disabled={date >= localDate()}><ArrowRight size={18} color={date >= localDate() ? '#C6BDB3' : colors.ink} /></TouchableOpacity></View>
-    <View style={styles.quickDays}><TouchableOpacity onPress={() => setDate(localDate())} style={[styles.quickDay, date === localDate() ? styles.quickDayActive : null]}><Text style={[styles.quickText, date === localDate() ? styles.quickTextActive : null]}>Бүгін</Text></TouchableOpacity><TouchableOpacity onPress={() => setDate(addLocalDays(localDate(), 1))} style={[styles.quickDay, date === addLocalDays(localDate(), 1) ? styles.quickDayActive : null]}><Text style={[styles.quickText, date === addLocalDays(localDate(), 1) ? styles.quickTextActive : null]}>Ертең</Text></TouchableOpacity><TouchableOpacity onPress={() => router.push('/calendar')} style={styles.quickDay}><Text style={styles.quickText}>Күнтізбе</Text></TouchableOpacity></View>
-    <Card style={styles.progressCard} color="#EDE5DA"><View style={styles.progressHeader}><View><Text style={styles.progressTitle}>Бүгінгі қозғалыс</Text><Text style={styles.progressSub}>{done} / {tasks.length} тапсырма орындалды</Text></View><View style={styles.progressCircle}><Text style={styles.progressPercent}>{Math.round(ratio * 100)}%</Text></View></View><View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.round(ratio * 100)}%` }]} /></View></Card>
+  return <AppScreen title="Күн жоспары" subtitle={`${tasks.length} тапсырма · ${done} орындалды`} right={<TouchableOpacity onPress={() => router.push('/tasks')} style={[styles.headerButton, { backgroundColor: palette.iconContainer }]} accessibilityRole="button" accessibilityLabel="Барлық тапсырманы ашу"><ListTodo size={18} color={palette.icon} /></TouchableOpacity>}>
+    <View style={styles.daySwitch}><TouchableOpacity onPress={() => stepDate(-1)} style={[styles.dayArrow, { backgroundColor: palette.iconContainer }]}><ArrowLeft size={18} color={palette.icon} /></TouchableOpacity><View style={styles.dayTitleWrap}><Text style={styles.dayTitle}>{dateTitle}</Text><Text style={styles.dayDate}>{new Intl.DateTimeFormat('kk-KZ', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${date}T12:00:00`))}</Text></View><TouchableOpacity onPress={() => stepDate(1)} style={[styles.dayArrow, { backgroundColor: palette.iconContainer }]} disabled={date >= localDate()}><ArrowRight size={18} color={date >= localDate() ? palette.disabledText : palette.icon} /></TouchableOpacity></View>
+    <View style={[styles.quickDays, { backgroundColor: palette.accentSurface }]}><TouchableOpacity onPress={() => setDate(localDate())} style={[styles.quickDay, date === localDate() ? [styles.quickDayActive, { backgroundColor: palette.paper }] : null]}><Text style={[styles.quickText, { color: palette.secondaryText }, date === localDate() ? styles.quickTextActive : null]}>{'Бүгін'}</Text></TouchableOpacity><TouchableOpacity onPress={() => setDate(addLocalDays(localDate(), 1))} style={[styles.quickDay, date === addLocalDays(localDate(), 1) ? [styles.quickDayActive, { backgroundColor: palette.paper }] : null]}><Text style={[styles.quickText, { color: palette.secondaryText }, date === addLocalDays(localDate(), 1) ? styles.quickTextActive : null]}>Ертең</Text></TouchableOpacity><TouchableOpacity onPress={() => router.push('/(tabs)/calendar')} style={styles.quickDay}><Text style={[styles.quickText, { color: palette.secondaryText }]}>Күнтізбе</Text></TouchableOpacity></View>
+    <Card style={styles.progressCard} color={palette.accentSurface}><View style={styles.progressHeader}><View><Text style={styles.progressTitle}>Бүгінгі қозғалыс</Text><Text style={styles.progressSub}>{done} / {tasks.length} тапсырма орындалды</Text></View><View style={[styles.progressCircle, { backgroundColor: palette.paper }]}><Text style={styles.progressPercent}>{Math.round(ratio * 100)}%</Text></View></View><View style={[styles.progressTrack, { backgroundColor: palette.line }]}><View style={[styles.progressFill, { width: `${Math.round(ratio * 100)}%`, backgroundColor: palette.accent }]} /></View></Card>
     <View style={styles.tasksHeader}><Text style={styles.sectionTitle}>Істер тізімі</Text><Text style={styles.count}>{tasks.length} тапсырма</Text></View>
     {tasks.length ? tasks.map((task, index) => <Card key={task.id} style={[styles.taskCard, task.completed ? styles.doneCard : null]}>
       <TouchableOpacity onPress={() => void updateTask(db, task.id, { completed: !task.completed }).then(refresh)} style={styles.checkButton} accessibilityRole="checkbox" accessibilityState={{ checked: task.completed }} accessibilityLabel={task.completed ? 'Орындалған тапсырма' : 'Тапсырманы орындау'}>{task.completed ? <CheckCircle2 size={23} color={colors.green} /> : <Circle size={23} color="#C6B7A5" />}</TouchableOpacity>

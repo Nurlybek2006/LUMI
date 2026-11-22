@@ -14,14 +14,14 @@ export function setGlobalColorTokens(palette: Palette) { activePalette = palette
 export const colors = {
   get background() { return activePalette.background; }, get paper() { return activePalette.paper; }, get ink() { return activePalette.ink; }, get muted() { return activePalette.muted; }, get accent() { return activePalette.accent; }, get line() { return activePalette.line; }, get green() { return activePalette.green; }, get red() { return activePalette.red; }
 };
-export const AppAppearanceContext = createContext<{ mode: AppearanceMode; palette: Palette; setMode: (mode: AppearanceMode) => void }>({ mode: 'system', palette: { background: colors.background, paper: colors.paper, elevated: '#FFF', ink: colors.ink, muted: colors.muted, accent: colors.accent, accentSoft: '#F0E5D8', line: colors.line, green: colors.green, red: colors.red, navigation: colors.paper, overlay: '#221B1680' }, setMode: () => undefined });
+export const AppAppearanceContext = createContext<{ mode: AppearanceMode; palette: Palette; setMode: (mode: AppearanceMode) => void }>({ mode: 'system', palette: lightPalette, setMode: () => undefined });
 export const useAppAppearance = () => useContext(AppAppearanceContext);
 
 const textTokenMap: Record<string, keyof Palette> = {
-  '#302820': 'ink', '#40352c': 'ink', '#382820': 'ink', '#887c70': 'muted', '#897c70': 'muted', '#766b61': 'muted', '#a3988c': 'muted', '#9e9387': 'muted', '#a79b8e': 'muted', '#81709a': 'muted', '#85749f': 'muted', '#9b9084': 'muted', '#a76b45': 'accent', '#b08968': 'accent', '#af865c': 'accent', '#b7864a': 'accent', '#a8793d': 'accent', '#6b8060': 'green', '#638267': 'green', '#527a62': 'green', '#a84e43': 'red', '#c36664': 'red'
+  '#302820': 'ink', '#40352c': 'ink', '#382820': 'ink', '#887c70': 'muted', '#897c70': 'muted', '#766b61': 'muted', '#71675e': 'muted', '#a3988c': 'muted', '#9e9387': 'muted', '#a79b8e': 'muted', '#81709a': 'muted', '#85749f': 'muted', '#9b9084': 'muted', '#a76b45': 'accent', '#8d5636': 'accent', '#b08968': 'accent', '#af865c': 'accent', '#b7864a': 'accent', '#a8793d': 'accent', '#6b8060': 'green', '#638267': 'green', '#527a62': 'green', '#42664f': 'green', '#a84e43': 'red', '#963d34': 'red', '#c36664': 'red', '#596b59': 'muted', '#75675b': 'muted', '#483d34': 'ink'
 };
 const surfaceTokenMap: Record<string, keyof Palette> = {
-  '#f7f3ec': 'background', '#fffcf7': 'paper', '#ffffff': 'elevated', '#fff': 'elevated', '#f1e9de': 'accentSoft', '#f0e9df': 'accentSoft', '#efe8de': 'accentSoft', '#eee7de': 'accentSoft', '#eee7dd': 'accentSoft', '#f2e7d9': 'accentSoft', '#f0e8dc': 'accentSoft', '#f1ebe2': 'accentSoft', '#efe7dc': 'accentSoft', '#e8d7c2': 'accentSoft', '#f3ece2': 'accentSoft', '#e6e5dc': 'accentSoft', '#e6eee4': 'accentSoft', '#e8ece2': 'accentSoft', '#ece8f3': 'accentSoft', '#ece9f3': 'accentSoft', '#f1e5d8': 'accentSoft', '#f1eae1': 'accentSoft', '#ede3d5': 'accentSoft', '#eee2d2': 'accentSoft', '#f7efe4': 'accentSoft', '#f3e7d7': 'accentSoft'
+  '#f7f3ec': 'background', '#fffcf7': 'paper', '#ffffff': 'elevated', '#fff': 'elevated', '#f1e9de': 'accentSoft', '#f0e9df': 'accentSoft', '#efe8de': 'accentSoft', '#eee7de': 'accentSoft', '#eee7dd': 'accentSoft', '#f2e7d9': 'accentSoft', '#f0e8dc': 'accentSoft', '#f1ebe2': 'accentSoft', '#efe7dc': 'accentSoft', '#e8d7c2': 'accentSoft', '#f3ece2': 'accentSoft', '#e6e5dc': 'accentSoft', '#e6eee4': 'accentSoft', '#e8ece2': 'accentSoft', '#ece8f3': 'accentSoft', '#ece9f3': 'accentSoft', '#f1e5d8': 'accentSoft', '#f1eae1': 'accentSoft', '#ede3d5': 'accentSoft', '#eee2d2': 'accentSoft', '#f7efe4': 'accentSoft', '#f3e7d7': 'accentSoft', '#f8f6f1': 'accentSoft', '#fbf7f0': 'accentSoft', '#f2e6d9': 'accentSoft', '#e7ece4': 'accentSoft', '#ebe7f2': 'accentSoft', '#e8e8e4': 'accentSoft', '#f3efe9': 'accentSoft', '#f3ebe1': 'accentSoft', '#f2e9dc': 'accentSoft', '#f0e7db': 'accentSoft', '#eee6db': 'accentSoft', '#edf0e8': 'accentSoft', '#f3e6d9': 'accentSoft', '#e4d2bd': 'accentSoft', '#faf5ed': 'accentSoft'
 };
 
 export const ThemedText = forwardRef<ComponentRef<typeof Text>, TextProps>(function ThemedText({ style, ...props }, ref) {
@@ -70,11 +70,13 @@ export function TextField({ label, containerStyle, ...props }: TextInputProps & 
 }
 
 export function SectionTitle({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
-  return <View style={styles.sectionRow}><Text style={styles.sectionTitle}>{title}</Text>{action && onAction ? <TouchableOpacity onPress={onAction} style={styles.sectionAction}><Text style={styles.sectionActionText}>{action}</Text><ChevronRight size={15} color={colors.accent} /></TouchableOpacity> : null}</View>;
+  const { palette } = useAppAppearance();
+  return <View style={styles.sectionRow}><Text style={[styles.sectionTitle, { color: palette.primaryText }]}>{title}</Text>{action && onAction ? <TouchableOpacity onPress={onAction} style={styles.sectionAction}><Text style={[styles.sectionActionText, { color: palette.accent }]}>{action}</Text><ChevronRight size={15} color={palette.accent} /></TouchableOpacity> : null}</View>;
 }
 
 export function SearchButton({ onPress }: { onPress: () => void }) {
-  return <TouchableOpacity style={styles.search} onPress={onPress} accessibilityRole="button" accessibilityLabel="Іздеу"><Search size={19} color={colors.muted} /></TouchableOpacity>;
+  const { palette } = useAppAppearance();
+  return <TouchableOpacity style={[styles.search, { backgroundColor: palette.iconContainer }]} onPress={onPress} accessibilityRole="button" accessibilityLabel="Іздеу"><Search size={19} color={palette.icon} /></TouchableOpacity>;
 }
 
 const styles = StyleSheet.create({

@@ -5,8 +5,9 @@ import { SaveQueue } from '../src/services/autosave.ts';
 import { isExternalActivityActive, withExternalActivity } from '../src/services/externalActivity.ts';
 import { DEFAULT_AUTO_LOCK_MINUTES, shouldAutoLockAfterBackground } from '../src/services/lockPolicy.ts';
 import { normalizeVocabularyTranslations } from '../src/utils/vocabulary.ts';
-import { paletteFor, resolveAppearance } from '../src/services/appearance.ts';
-import { buildPageCurlMesh, nextPageIndex, shouldCommitPageTurn } from '../src/utils/pageTurn.ts';
+import { contrastRatio, paletteFor, resolveAppearance } from '../src/services/appearance.ts';
+import { buildPageCurlMesh, clampPageIndex, nextPageIndex, resolvePageIndex, shouldCommitPageTurn } from '../src/utils/pageTurn.ts';
+import { monthGrid, moveCalendarSelection, shiftMonth, visibleCalendarDates, weekStart } from '../src/utils/calendar.ts';
 
 const file = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -17,6 +18,24 @@ test('global appearance resolves Light, Dark and System palettes without touchin
   assert.equal(resolveAppearance('system', false), 'light');
   assert.notEqual(paletteFor('dark', false).background, paletteFor('light', false).background);
   assert.equal(paletteFor('system', true).ink, paletteFor('dark', false).ink);
+  for (const palette of [paletteFor('light', false), paletteFor('dark', false)]) {
+    assert.ok(contrastRatio(palette.primaryText, palette.appBackground) >= 4.5);
+    assert.ok(contrastRatio(palette.cardText, palette.cardBackground) >= 4.5);
+    assert.ok(contrastRatio(palette.selectedText, palette.selectedBackground) >= 4.5);
+    assert.ok(contrastRatio(palette.accentForeground, palette.accentSurface) >= 4.5);
+    assert.ok(contrastRatio(palette.icon, palette.iconContainer) >= 3);
+  }
+});
+
+test('calendar date helpers cover week starts, leap months, month boundaries and navigation', () => {
+  assert.equal(weekStart('2024-02-29'), '2024-02-26');
+  assert.equal(monthGrid('2024-02').filter(Boolean).length, 29);
+  assert.equal(monthGrid('2025-02').filter(Boolean).length, 28);
+  assert.equal(shiftMonth('2024-12', 1), '2025-01');
+  assert.equal(shiftMonth('2025-01', -1), '2024-12');
+  assert.deepEqual(visibleCalendarDates('week', '2024-02-29', '2024-02'), ['2024-02-26', '2024-02-27', '2024-02-28', '2024-02-29', '2024-03-01', '2024-03-02', '2024-03-03']);
+  assert.equal(moveCalendarSelection('2024-02-29', 'week', 1), '2024-03-07');
+  assert.equal(moveCalendarSelection('2024-02-29', 'month', 1), '2024-03-01');
 });
 
 test('page gestures commit at progress or velocity thresholds and clamp the page index', () => {
@@ -26,6 +45,56 @@ test('page gestures commit at progress or velocity thresholds and clamp the page
   assert.equal(nextPageIndex(0, -1, 4), 0);
   assert.equal(nextPageIndex(3, 1, 4), 3);
   assert.equal(nextPageIndex(1, 1, 4), 2);
+  for (const pageCount of [0, 1, 2, 100]) {
+    for (let index = -2; index <= pageCount + 2; index += 1) {
+      for (const direction of [-1, 1] as const) {
+        const next = nextPageIndex(index, direction, pageCount);
+        assert.ok(next >= 0);
+        assert.ok(next <= Math.max(0, pageCount - 1));
+      }
+    }
+  }
+  let rapidIndex = 0;
+  for (let swipe = 0; swipe < 250; swipe += 1) rapidIndex = nextPageIndex(rapidIndex, swipe % 2 ? -1 : 1, 100);
+  assert.equal(rapidIndex, 0);
+  assert.equal(nextPageIndex(0, -1, 0), 0);
+  assert.equal(nextPageIndex(0, 1, 1), 0);
+  assert.equal(nextPageIndex(99, 1, 100), 99);
+  assert.equal(nextPageIndex(1, -1, 2), 0);
+  assert.equal(clampPageIndex(Number.NaN, 100), 0);
+  assert.equal(clampPageIndex(Number.POSITIVE_INFINITY, 100), 0);
+  assert.equal(clampPageIndex(999, 2), 1);
+  const pages = [{ entryId: 'entry-a', segment: 0, date: '2025-04-01' }, { entryId: 'entry-b', segment: 1, date: '2025-04-02' }];
+  assert.equal(resolvePageIndex('{"entryId":"deleted-entry","segment":5}', pages), 0);
+  assert.equal(resolvePageIndex('{"entryId":"entry-b","segment":1}', pages), 1);
+  assert.equal(resolvePageIndex('99', pages), 1);
+  assert.equal(resolvePageIndex('not-json', pages), 0);
+  assert.equal(resolvePageIndex('{"entryId":"entry-b","segment":1}', pages, '2025-04-01'), 0);
+  assert.equal(resolvePageIndex('1', []), 0);
+});
+
+test('reader cancels native animations when a gesture is cancelled, mode changes or the screen unmounts', () => {
+  const reader = file('app/notebook/[id].tsx');
+  assert.match(reader, /\.onFinalize\(\(_event, success\)/u);
+  assert.match(reader, /if \(success \|\| validGesture\.value !== 1\) return/u);
+  assert.match(reader, /cancelAnimation\(translate\); cancelAnimation\(shade\); cancelAnimation\(curlProgress\)/u);
+  assert.match(reader, /clampPageIndex\(pageIndex, pages\.length\)/u);
+  assert.match(reader, /resolvePageIndex\(rememberedPage/u);
+  assert.match(reader, /makeImageFromView/u);
+  assert.match(reader, /fallback/u);
+});
+
+test('calendar route links retain the requested date and open actual planner and journal destinations', () => {
+  const calendar = file('app/(tabs)/calendar.tsx');
+  const journal = file('app/(tabs)/journal.tsx');
+  const planner = file('app/(tabs)/planner.tsx');
+  assert.match(calendar, /pathname: '\/\(tabs\)\/planner', params: \{ date: selected/u);
+  assert.match(calendar, /pathname: '\/\(tabs\)\/journal', params: \{ date: selected/u);
+  assert.match(calendar, /SELECT id,entry_date,title,notebook_id FROM entries/u);
+  assert.match(calendar, /task_date BETWEEN \? AND \?/u);
+  assert.match(journal, /pathname: '\/\(tabs\)\/calendar', params: \{ date \}/u);
+  assert.match(planner, /router\.push\('\/\(tabs\)\/calendar'\)/u);
+  assert.match(planner, /openAddOnMount/);
 });
 
 test('Skia page-curl mesh keeps the page flat at rest and builds shaded front and backside meshes while turning both ways', () => {

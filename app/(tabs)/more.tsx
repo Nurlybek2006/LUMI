@@ -4,7 +4,7 @@ import { BarChart3, CalendarDays, CircleHelp, Search, Settings2, ShieldCheck, Sp
 import { AppScreen, Card, colors, ThemedText as Text, useAppAppearance, ThemedView as View } from '@/components/ui';
 
 const links = [
-  { title: 'Күнтізбе', subtitle: 'Жазбалар, істер және көңіл күй', icon: CalendarDays, route: '/calendar', tint: '#F2E6D9' },
+  { title: 'Күнтізбе', subtitle: 'Күнделік жазбалары мен тапсырмалар', icon: CalendarDays, route: '/(tabs)/calendar', tint: '#F2E6D9' },
   { title: 'Статистика', subtitle: 'Жазу әдеті мен оқу барысы', icon: BarChart3, route: '/statistics', tint: '#E7ECE4' },
   { title: 'Жалпы іздеу', subtitle: 'Дәптерлер мен сақталған мазмұн', icon: Search, route: '/search', tint: '#EBE7F2' },
   { title: 'Баптаулар', subtitle: 'Құпиялылық, көшірме және тақырыптар', icon: Settings2, route: '/settings', tint: '#E8E8E4' }

@@ -12,7 +12,7 @@ const typeLabels = { general: 'Жалпы дәптер', journal: 'Күндел�
 type NotebookWithPages = { book: Notebook; pages: NotebookPage[]; entries: Entry[] };
 
 export default function EditorHome() {
-  useAppAppearance();
+  const { palette } = useAppAppearance();
   const db = useSQLiteContext(); const [items, setItems] = useState<NotebookWithPages[]>([]);
   const refresh = useCallback(async () => {
     const books = await listNotebooks(db);
@@ -32,10 +32,10 @@ export default function EditorHome() {
       {items.map((item) => { const { book, pages, entries } = item; const theme = getTheme(book.themeId); const Icon = book.type === 'vocabulary' ? Languages : BookOpen; return <Card key={book.id} style={styles.card}>
         <View style={styles.row}><View style={[styles.cover, { backgroundColor: theme.cover }]}><Icon size={19} color="#FFF9F1" /></View><View style={{ flex: 1 }}><Text style={styles.title}>{book.title}</Text><Text style={styles.subtitle}>{typeLabels[book.type]} · {new Intl.DateTimeFormat('kk-KZ', { day: 'numeric', month: 'short' }).format(new Date(book.updatedAt))}</Text></View></View>
         {book.type === 'general' ? <>
-          {pages.slice(0, 4).map((page) => <TouchableOpacity key={page.id} style={styles.pageRow} onPress={() => openEditor(item, page)}><Text style={styles.pageName} numberOfLines={1}>{page.title || page.content.slice(0, 55) || 'Атаусыз бет'}</Text><Edit3 size={14} color={colors.accent} /></TouchableOpacity>)}
+          {pages.slice(0, 4).map((page) => <TouchableOpacity key={page.id} style={[styles.pageRow, { borderColor: palette.divider }]} onPress={() => openEditor(item, page)}><Text style={styles.pageName} numberOfLines={1}>{page.title || page.content.slice(0, 55) || 'Атаусыз бет'}</Text><Edit3 size={14} color={palette.accent} /></TouchableOpacity>)}
           <TouchableOpacity style={styles.action} onPress={() => openEditor(item)}><FilePlus2 size={16} color={colors.accent} /><Text style={styles.actionText}>Жаңа бет</Text></TouchableOpacity>
         </> : book.type === 'journal' ? <>
-          {entries.slice(0, 4).map((entry) => <TouchableOpacity key={entry.id} style={styles.pageRow} onPress={() => router.push({ pathname: '/(tabs)/journal', params: { notebookId: book.id, date: entry.date } })}><Text style={styles.pageName} numberOfLines={1}>{entry.title || entry.content.slice(0, 55) || entry.date}</Text><Text style={styles.entryDate}>{entry.date}</Text></TouchableOpacity>)}
+          {entries.slice(0, 4).map((entry) => <TouchableOpacity key={entry.id} style={[styles.pageRow, { borderColor: palette.divider }]} onPress={() => router.push({ pathname: '/(tabs)/journal', params: { notebookId: book.id, date: entry.date } })}><Text style={styles.pageName} numberOfLines={1}>{entry.title || entry.content.slice(0, 55) || entry.date}</Text><Text style={styles.entryDate}>{entry.date}</Text></TouchableOpacity>)}
           <TouchableOpacity style={styles.action} onPress={() => openEditor(item)}><FilePlus2 size={16} color={colors.accent} /><Text style={styles.actionText}>Бүгінгі жазба</Text></TouchableOpacity>
         </> : <TouchableOpacity style={styles.action} onPress={() => openEditor(item)}><Edit3 size={16} color={colors.accent} /><Text style={styles.actionText}>Өңдеуді ашу</Text><ChevronRight size={16} color={colors.accent} /></TouchableOpacity>}
       </Card>; })}

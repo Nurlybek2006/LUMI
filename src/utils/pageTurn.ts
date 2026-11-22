@@ -3,7 +3,31 @@ export function shouldCommitPageTurn(translationX: number, velocityX: number, wi
 }
 
 export function nextPageIndex(index: number, direction: -1 | 1, pageCount: number): number {
-  return Math.max(0, Math.min(Math.max(0, pageCount - 1), index + direction));
+  return clampPageIndex(index + direction, pageCount);
+}
+
+export function clampPageIndex(index: number, pageCount: number): number {
+  if (!Number.isFinite(index) || !Number.isFinite(pageCount) || pageCount <= 0) return 0;
+  return Math.max(0, Math.min(Math.max(0, Math.floor(pageCount) - 1), Math.floor(index)));
+}
+
+export function resolvePageIndex(saved: string | null, pages: readonly { entryId: string; segment: number; date: string }[], requestedDate?: string): number {
+  let candidate = 0;
+  if (saved) {
+    try {
+      const value: unknown = JSON.parse(saved);
+      if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0) candidate = value;
+      else if (value && typeof value === 'object' && 'entryId' in value && typeof value.entryId === 'string' && 'segment' in value && Number.isInteger(value.segment)) {
+        const match = pages.findIndex((page) => page.entryId === value.entryId && page.segment === value.segment);
+        if (match >= 0) candidate = match;
+      }
+    } catch { /* Invalid or obsolete bookmarks start at the first valid page. */ }
+  }
+  if (requestedDate) {
+    const requestedIndex = pages.findIndex((page) => page.date === requestedDate);
+    if (requestedIndex >= 0) candidate = requestedIndex;
+  }
+  return clampPageIndex(candidate, pages.length);
 }
 
 export type PageCurlMesh = {

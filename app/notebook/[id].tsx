@@ -4,7 +4,7 @@ import { AccessibilityInfo, Image, ScrollView, StyleSheet, Text, TextInput, Touc
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { makeImageFromView } from '@shopify/react-native-skia';
 import type { SkImage } from '@shopify/react-native-skia';
 import { BookOpen, ChevronLeft, ChevronRight, Edit3, Languages, Palette, Plus, Search } from 'lucide-react-native';
@@ -18,7 +18,7 @@ import { localDate, wordCount } from '@/utils/core';
 import type { Entry, Notebook, NotebookPage, PlannerTask, ThemeId, VocabularyWord } from '@/types/models';
 import { VocabularyColumnsBlock } from '@/components/VocabularyColumnsBlock';
 import { LumiActionSheet, LumiBottomSheet, LumiConfirmDialog, LumiDialog } from '@/components/LumiModal';
-import { nextPageIndex, shouldCommitPageTurn } from '@/utils/pageTurn';
+import { clampPageIndex, nextPageIndex, resolvePageIndex, shouldCommitPageTurn } from '@/utils/pageTurn';
 import { PageSurface } from '@/components/book/PageSurface';
 import { RealisticPageCurl } from '@/components/book/RealisticPageCurl';
 
@@ -41,54 +41,61 @@ export default function NotebookReaderScreen() {
   const frontPageRef = useRef<HostInstance>(null);
   const neighborPageRef = useRef<HostInstance>(null);
   const curlSession = useRef(0);
+  const refreshSession = useRef(0);
+  const previousAnimation = useRef(pageAnimation);
+  const readerMounted = useRef(true);
   const turning = useRef(false);
   const translate = useSharedValue(0); const shade = useSharedValue(0);
   const curlProgress = useSharedValue(0); const curlDirectionValue = useSharedValue< -1 | 1 >(1); const curlTouchY = useSharedValue(0); const curlReadyValue = useSharedValue(0);
   const fallbackValue = useSharedValue(0);
   const turnLock = useSharedValue(0); const validGesture = useSharedValue(0);
-  const activePage = pages[pageIndex]; const theme = getTheme(book?.themeId ?? 'warm');
+  const safePageIndex = clampPageIndex(pageIndex, pages.length);
+  const activePage = pages[safePageIndex]; const theme = getTheme(book?.themeId ?? 'warm');
 
   const refresh = useCallback(async () => {
+    const session = ++refreshSession.current;
+    try {
     const [notebook, allEntries, rememberedPage, systemReduce, motionSetting, allPages, animationSetting] = await Promise.all([
       getNotebook(db, id), listEntries(db, id), readSetting(db, `reading:${id}`), AccessibilityInfo.isReduceMotionEnabled(), readSetting(db, 'reduced_motion'), listNotebookPages(db, id), readSetting(db, 'page_animation')
     ]);
+    if (session !== refreshSession.current) return;
     setBook(notebook); setBookLoaded(true); setEntries(allEntries); setGeneralPages(allPages); setReducedMotion(systemReduce || motionSetting === 'true'); setPageAnimation(animationSetting === 'realistic' || animationSetting === 'none' || animationSetting === 'slide' ? animationSetting : 'smooth');
     const calculated = allEntries.flatMap((entry) => paginateEntry(entry, Math.max(290, width - 76), Math.max(480, height - 245), notebook?.themeId ?? 'warm', fontScale));
     setPages(calculated);
-    let rememberedIndex = Number(rememberedPage ?? 0);
-    if (requestedDate) { const requestedIndex = calculated.findIndex((page) => page.entry.date === requestedDate); if (requestedIndex >= 0) rememberedIndex = requestedIndex; }
-    if (rememberedPage) {
-      try {
-        const location = JSON.parse(rememberedPage) as { entryId?: string; segment?: number };
-        const matchingPage = calculated.findIndex((page) => page.entry.id === location.entryId && page.segment === location.segment);
-        if (matchingPage >= 0) rememberedIndex = matchingPage;
-      } catch { /* Keep the numeric page index saved by older app versions. */ }
+    const restoredIndex = resolvePageIndex(rememberedPage, calculated.map((page) => ({ entryId: page.entry.id, segment: page.segment, date: page.entry.date })), requestedDate);
+    setPageIndex(restoredIndex);
+    } catch (error) {
+      if (session !== refreshSession.current) return;
+      console.error('[LUMI reader] Дәптер деректерін жүктеу қатесі', error);
+      setBookLoaded(true);
+      setPages([]);
+      setPageIndex(0);
     }
-    const restoreAt = Math.min(calculated.length - 1, Math.max(0, rememberedIndex));
-    setPageIndex(calculated.length ? restoreAt : 0);
   }, [db, fontScale, height, id, requestedDate, width]);
-  useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
+  useFocusEffect(useCallback(() => { void refresh(); return () => { refreshSession.current += 1; }; }, [refresh]));
 
   useEffect(() => {
     if (!book || !pages.length) return;
     const timer = setTimeout(() => {
-      const page = pages[pageIndex];
-      const location = page ? JSON.stringify({ entryId: page.entry.id, segment: page.segment }) : String(pageIndex);
+      const page = pages[safePageIndex];
+      const location = page ? JSON.stringify({ entryId: page.entry.id, segment: page.segment }) : String(safePageIndex);
       void writeSetting(db, `reading:${id}`, location);
     }, 150);
     return () => clearTimeout(timer);
-  }, [book, db, id, pageIndex, pages]);
+  }, [book, db, id, safePageIndex, pages]);
 
   useEffect(() => () => { curlImage?.dispose(); }, [curlImage]);
+  useEffect(() => {
+    readerMounted.current = true;
+    return () => { readerMounted.current = false; curlSession.current += 1; cancelAnimation(translate); cancelAnimation(shade); cancelAnimation(curlProgress); };
+  }, [curlProgress, shade, translate]);
 
   const clearCurl = useCallback(() => {
     curlSession.current += 1;
     turning.current = false;
     turnLock.value = 0;
     validGesture.value = 0;
-    setCurlReady(false);
-    setCurlNeighborIndex(-1);
-    setCurlImage(null);
+    if (readerMounted.current) { setCurlReady(false); setCurlNeighborIndex(-1); setCurlImage(null); }
     curlProgress.value = 0;
     curlReadyValue.value = 0;
     fallbackValue.value = 0;
@@ -96,21 +103,31 @@ export default function NotebookReaderScreen() {
     shade.value = 0;
   }, [curlProgress, curlReadyValue, fallbackValue, shade, translate, turnLock, validGesture]);
 
+  useEffect(() => {
+    if (previousAnimation.current !== pageAnimation) {
+      previousAnimation.current = pageAnimation;
+      cancelAnimation(translate); cancelAnimation(shade); cancelAnimation(curlProgress);
+      clearCurl();
+    }
+    return () => { cancelAnimation(translate); cancelAnimation(shade); cancelAnimation(curlProgress); };
+  }, [clearCurl, curlProgress, pageAnimation, shade, translate]);
+
   const commitCurl = useCallback((direction: -1 | 1) => {
+    if (!readerMounted.current) return;
     setPageIndex((current) => nextPageIndex(current, direction, pages.length));
     clearCurl();
   }, [clearCurl, pages.length]);
 
   const prepareCurl = useCallback(async (direction: -1 | 1, touchY: number) => {
     if (turning.current || reducedMotion || pageAnimation !== 'realistic') return false;
-    const neighbor = nextPageIndex(pageIndex, direction, pages.length);
-    if (neighbor === pageIndex) return false;
+    const neighbor = nextPageIndex(safePageIndex, direction, pages.length);
+    if (neighbor === safePageIndex) return false;
     turning.current = true;
     const session = ++curlSession.current;
     curlDirectionValue.value = direction; curlTouchY.value = touchY;
     setCurlNeighborIndex(neighbor); setCurlReady(false); curlReadyValue.value = 0;
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    if (session !== curlSession.current || fallbackValue.value === 1 || !frontPageRef.current) return false;
+    if (session !== curlSession.current || fallbackValue.value === 1 || !frontPageRef.current) { if (session === curlSession.current) turning.current = false; return false; }
     try {
       const image = await makeImageFromView(frontPageRef as unknown as React.RefObject<React.Component | null>);
       if (!image) throw new Error('Бет суретін түсіру мүмкін болмады.');
@@ -119,16 +136,17 @@ export default function NotebookReaderScreen() {
       fallbackValue.value = 0;
       setCurlImage(image); setCurlReady(true); curlReadyValue.value = 1;
       return true;
-    } catch {
+    } catch (error) {
+      console.warn('[LUMI reader] Skia snapshot сәтсіз аяқталды; жеңіл бет ауыстыруы қолданылады.', error);
       if (session === curlSession.current) { turning.current = false; setCurlReady(false); setCurlNeighborIndex(-1); curlReadyValue.value = 0; }
       return false;
     }
-  }, [curlDirectionValue, curlProgress, curlReadyValue, curlTouchY, fallbackValue, pageAnimation, pageIndex, pages.length, reducedMotion]);
+  }, [curlDirectionValue, curlProgress, curlReadyValue, curlTouchY, fallbackValue, pageAnimation, safePageIndex, pages.length, reducedMotion]);
 
   const onPage = (rawDirection: number) => {
     const direction = rawDirection < 0 ? -1 : 1;
-    const next = nextPageIndex(pageIndex, direction, pages.length);
-    if (next === pageIndex || turning.current) return;
+    const next = nextPageIndex(safePageIndex, direction, pages.length);
+    if (next === safePageIndex || turning.current) return;
     if (reducedMotion || pageAnimation === 'none') { setPageIndex(next); return; }
     if (pageAnimation === 'realistic') {
       void prepareCurl(direction, height / 2).then((ready) => {
@@ -158,8 +176,8 @@ export default function NotebookReaderScreen() {
     .onEnd((event) => {
       if (validGesture.value !== 1) return;
       const direction = event.translationX < 0 ? 1 : -1;
-      const next = nextPageIndex(pageIndex, direction, pages.length);
-      if (next !== pageIndex && shouldCommitPageTurn(event.translationX, event.velocityX, width)) {
+      const next = nextPageIndex(safePageIndex, direction, pages.length);
+      if (next !== safePageIndex && shouldCommitPageTurn(event.translationX, event.velocityX, width)) {
         if (pageAnimation === 'realistic' && !reducedMotion) {
           if (curlReadyValue.value === 1) {
             curlProgress.value = withTiming(1, { duration: 360 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
@@ -177,6 +195,16 @@ export default function NotebookReaderScreen() {
       } else {
         translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
         shade.value = withTiming(0, { duration: 160 });
+      }
+    })
+    .onFinalize((_event, success) => {
+      if (success || validGesture.value !== 1) return;
+      cancelAnimation(translate); cancelAnimation(shade); cancelAnimation(curlProgress);
+      if (pageAnimation === 'realistic' && !reducedMotion && curlReadyValue.value === 1) {
+        curlProgress.value = withTiming(0, { duration: 160 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+      } else {
+        translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        shade.value = withTiming(0, { duration: 120 });
       }
     });
   const pageStyle = useAnimatedStyle(() => {
@@ -207,10 +235,10 @@ export default function NotebookReaderScreen() {
       <View style={styles.pageArea} onLayout={({ nativeEvent }) => { const nextSize = { width: nativeEvent.layout.width, height: nativeEvent.layout.height }; setCurlSize((current) => current.width === nextSize.width && current.height === nextSize.height ? current : nextSize); }}>
         {pages[curlNeighborIndex] ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.underPage}><PageSurface ref={neighborPageRef} page={pages[curlNeighborIndex]!} pageNumber={curlNeighborIndex + 1} themeId={book.themeId} /></View> : null}
         <View style={[styles.shadowPage, { backgroundColor: theme.line }]} />
-        <GestureDetector gesture={pan}><Animated.View style={[styles.pageFrame, pageStyle, curlReady ? { opacity: 0 } : null]}><PageSurface ref={frontPageRef} page={activePage} pageNumber={pageIndex + 1} themeId={book.themeId} /></Animated.View></GestureDetector>
-        {curlReady && curlImage && curlSize.width > 0 && curlSize.height > 0 ? <RealisticPageCurl image={curlImage} width={curlSize.width} height={curlSize.height} progress={curlProgress} direction={curlDirectionValue} touchY={curlTouchY} paperColor={theme.page} /> : null}
+        <GestureDetector gesture={pan}><Animated.View style={[styles.pageFrame, pageStyle, pageAnimation === 'realistic' && curlReady ? { opacity: 0 } : null]}><PageSurface ref={frontPageRef} page={activePage} pageNumber={safePageIndex + 1} themeId={book.themeId} /></Animated.View></GestureDetector>
+        {pageAnimation === 'realistic' && curlReady && curlImage && curlSize.width > 0 && curlSize.height > 0 ? <RealisticPageCurl image={curlImage} width={curlSize.width} height={curlSize.height} progress={curlProgress} direction={curlDirectionValue} touchY={curlTouchY} paperColor={theme.page} /> : null}
       </View>
-      <View style={styles.pageControls}><TouchableOpacity onPress={() => onPage(-1)} disabled={pageIndex === 0} style={styles.arrow}><ChevronLeft size={21} color={pageIndex === 0 ? '#D4C9BC' : colors.ink} /></TouchableOpacity><View style={styles.pageProgress}><View style={styles.progressTrack}><View style={[styles.progressFill, { backgroundColor: theme.accent, width: `${((pageIndex + 1) / pages.length) * 100}%` }]} /></View><Text style={styles.pageProgressText}>{pageIndex + 1} / {pages.length} бет</Text></View><TouchableOpacity onPress={() => onPage(1)} disabled={pageIndex === pages.length - 1} style={styles.arrow}><ChevronRight size={21} color={pageIndex === pages.length - 1 ? '#D4C9BC' : colors.ink} /></TouchableOpacity></View>
+      <View style={styles.pageControls}><TouchableOpacity onPress={() => onPage(-1)} disabled={safePageIndex === 0} style={styles.arrow}><ChevronLeft size={21} color={safePageIndex === 0 ? '#D4C9BC' : colors.ink} /></TouchableOpacity><View style={styles.pageProgress}><View style={styles.progressTrack}><View style={[styles.progressFill, { backgroundColor: theme.accent, width: `${((safePageIndex + 1) / pages.length) * 100}%` }]} /></View><Text style={styles.pageProgressText}>{safePageIndex + 1} / {pages.length} бет</Text></View><TouchableOpacity onPress={() => onPage(1)} disabled={safePageIndex === pages.length - 1} style={styles.arrow}><ChevronRight size={21} color={safePageIndex === pages.length - 1 ? '#D4C9BC' : colors.ink} /></TouchableOpacity></View>
     </> : <View style={styles.empty}><BookOpen size={37} color={theme.accent} /><Text style={[styles.emptyTitle, { color: theme.ink }]}>Бұл дәптер әлі бос</Text><Text style={[styles.emptyText, { color: theme.muted }]}>Өз ойыңызбен алғашқы бетті толтырыңыз.</Text><TouchableOpacity onPress={createPage} style={[styles.startButton, { backgroundColor: theme.cover }]}><Plus size={17} color="#FFF9F1" /><Text style={styles.startText}>Бірінші бет</Text></TouchableOpacity></View>}
     <Text style={styles.gestureHint}>Бетті келесі бетке сырғытыңыз</Text>
     <LumiBottomSheet visible={themePicker} title="Кітап тақырыбы" onClose={() => setThemePicker(false)}>{themeIds.map((themeId) => { const value = themes[themeId]; return <TouchableOpacity key={themeId} onPress={() => void chooseTheme(themeId)} style={[styles.themeRow, book.themeId === themeId ? { backgroundColor: '#F0E8DC' } : null]}><View style={[styles.themeDot, { backgroundColor: value.cover }]} /><View style={{ flex: 1 }}><Text style={styles.themeRowTitle}>{value.name}</Text><Text style={styles.themeRowSub}>{value.subtitle}</Text></View>{book.themeId === themeId ? <Text style={{ color: colors.accent }}>✓</Text> : null}</TouchableOpacity>; })}</LumiBottomSheet>

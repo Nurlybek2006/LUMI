@@ -12,7 +12,7 @@ import { addLocalDays, localDate, nextReview } from '@/utils/core';
 import type { VocabularyWord } from '@/types/models';
 
 export default function ReviewScreen() {
-  useAppAppearance();
+  const { palette } = useAppAppearance();
   const db = useSQLiteContext();
   const [queue, setQueue] = useState<VocabularyWord[]>([]);
   const [index, setIndex] = useState(0);
@@ -64,10 +64,10 @@ export default function ReviewScreen() {
     catch (error) { Alert.alert('Қайталау сақталмады', error instanceof Error ? error.message : 'Қайта көріңіз.'); }
   };
 
-  return <AppScreen title="Сөз қайталау" subtitle={loaded && queue.length ? `${index + 1} / ${queue.length} сөз` : 'Есте сақтау жаттығуы'} scroll={false} contentStyle={styles.content} right={<TouchableOpacity style={styles.close} onPress={() => router.back()} accessibilityLabel="Жабу"><X size={20} color={colors.ink} /></TouchableOpacity>}>
+  return <AppScreen title="Сөз қайталау" subtitle={loaded && queue.length ? `${index + 1} / ${queue.length} сөз` : 'Есте сақтау жаттығуы'} scroll={false} contentStyle={styles.content} right={<TouchableOpacity style={[styles.close, { backgroundColor: palette.iconContainer }]} onPress={() => router.back()} accessibilityLabel="Жабу"><X size={20} color={palette.icon} /></TouchableOpacity>}>
     {!loaded ? <Text style={styles.loading}>Қайталау дайындалып жатыр…</Text> : !queue.length ? <View style={styles.doneWrap}><View style={styles.doneIcon}><Sparkles size={29} color={colors.accent} /></View><Text style={styles.doneTitle}>{reviewed ? 'Керемет жұмыс!' : 'Бүгінге сөз жоқ'}</Text><Text style={styles.doneBody}>{reviewed ? `${reviewed} сөз қайталанды. ${correct} сөз есіңізде қалды.` : 'Жаңа сөз қоссаңыз, кейін қайталауға келеді.'}</Text><View style={styles.summary}><Text style={styles.summaryText}>Келесі шолу күні бойынша жоспарланады</Text></View><TouchableOpacity style={styles.doneButton} onPress={() => router.back()}><Text style={styles.doneButtonText}>Сөздікке қайту</Text></TouchableOpacity></View> : !card ? <Text style={styles.loading}>Сөз дайындалып жатыр…</Text> : <>
       <View style={styles.sessionProgress}><View style={[styles.progressBar, { width: `${Math.max(3, Math.round((reviewed / Math.max(1, reviewed + queue.length)) * 100))}%` }]} /></View>
-      <View style={styles.cardArea}><GestureDetector gesture={pan}><Animated.View style={[styles.flashcard, animatedStyle]}>
+      <View style={styles.cardArea}><GestureDetector gesture={pan}><Animated.View style={[styles.flashcard, { backgroundColor: palette.cardBackground, borderColor: palette.border }, animatedStyle]}>
         <View style={styles.cardTop}><Text style={styles.cardLabel}>{showBack ? 'АУДАРМАСЫ' : 'СӨЗ'}</Text><Text style={styles.cardCount}>{index + 1} / {queue.length}</Text></View>
         <TouchableOpacity activeOpacity={0.92} onPress={flipCard} style={styles.cardFace}>
           <Text style={styles.word}>{showBack ? card.translation : card.source}</Text>
