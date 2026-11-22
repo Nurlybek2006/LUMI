@@ -12,6 +12,7 @@
     "lint": "eslint app src tests app.config.js eslint.config.js --max-warnings 0"
   },
   "dependencies": {
+    "@shopify/react-native-skia": "2.14.0",
     "base64-js": "^1.5.1",
     "expo": "~58.0.0",
     "expo-constants": "~58.0.16",

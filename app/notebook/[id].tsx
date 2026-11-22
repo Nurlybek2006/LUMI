@@ -1,9 +1,12 @@
+/* eslint react-hooks/immutability: off, react-hooks/refs: off -- Reanimated worklets intentionally mutate SharedValues and bridge JS refs. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions, type StyleProp, type TextStyle } from 'react-native';
+import { AccessibilityInfo, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions, type HostInstance, type StyleProp, type TextStyle } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import { makeImageFromView } from '@shopify/react-native-skia';
+import type { SkImage } from '@shopify/react-native-skia';
 import { BookOpen, ChevronLeft, ChevronRight, Edit3, Languages, Palette, Plus, Search } from 'lucide-react-native';
 import { AppScreen, colors } from '@/components/ui';
 import { deleteNotebookPage, duplicateNotebookPage, getNotebook, listEntries, listNotebookPages, listNotebooks, listTasks, listWords, renameNotebookPage, updateNotebook, moveNotebookPage } from '@/database/repository';
@@ -16,6 +19,8 @@ import type { Entry, Notebook, NotebookPage, PlannerTask, ThemeId, VocabularyWor
 import { VocabularyColumnsBlock } from '@/components/VocabularyColumnsBlock';
 import { LumiActionSheet, LumiBottomSheet, LumiConfirmDialog, LumiDialog } from '@/components/LumiModal';
 import { nextPageIndex, shouldCommitPageTurn } from '@/utils/pageTurn';
+import { PageSurface } from '@/components/book/PageSurface';
+import { RealisticPageCurl } from '@/components/book/RealisticPageCurl';
 
 export default function NotebookReaderScreen() {
   const { id, pageId: requestedPageId, date: requestedDate } = useLocalSearchParams<{ id: string; pageId?: string; date?: string }>();
@@ -28,15 +33,26 @@ export default function NotebookReaderScreen() {
   const [pageIndex, setPageIndex] = useState(0);
   const [themePicker, setThemePicker] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
-  const [pageAnimation, setPageAnimation] = useState<'smooth' | 'slide' | 'none'>('smooth');
+  const [pageAnimation, setPageAnimation] = useState<'realistic' | 'smooth' | 'slide' | 'none'>('smooth');
+  const [curlImage, setCurlImage] = useState<SkImage | null>(null);
+  const [curlNeighborIndex, setCurlNeighborIndex] = useState(-1);
+  const [curlReady, setCurlReady] = useState(false);
+  const [curlSize, setCurlSize] = useState({ width: 0, height: 0 });
+  const frontPageRef = useRef<HostInstance>(null);
+  const neighborPageRef = useRef<HostInstance>(null);
+  const curlSession = useRef(0);
+  const turning = useRef(false);
   const translate = useSharedValue(0); const shade = useSharedValue(0);
+  const curlProgress = useSharedValue(0); const curlDirectionValue = useSharedValue< -1 | 1 >(1); const curlTouchY = useSharedValue(0); const curlReadyValue = useSharedValue(0);
+  const fallbackValue = useSharedValue(0);
+  const turnLock = useSharedValue(0); const validGesture = useSharedValue(0);
   const activePage = pages[pageIndex]; const theme = getTheme(book?.themeId ?? 'warm');
 
   const refresh = useCallback(async () => {
     const [notebook, allEntries, rememberedPage, systemReduce, motionSetting, allPages, animationSetting] = await Promise.all([
       getNotebook(db, id), listEntries(db, id), readSetting(db, `reading:${id}`), AccessibilityInfo.isReduceMotionEnabled(), readSetting(db, 'reduced_motion'), listNotebookPages(db, id), readSetting(db, 'page_animation')
     ]);
-    setBook(notebook); setBookLoaded(true); setEntries(allEntries); setGeneralPages(allPages); setReducedMotion(systemReduce || motionSetting === 'true'); setPageAnimation(animationSetting === 'none' || animationSetting === 'slide' ? animationSetting : 'smooth');
+    setBook(notebook); setBookLoaded(true); setEntries(allEntries); setGeneralPages(allPages); setReducedMotion(systemReduce || motionSetting === 'true'); setPageAnimation(animationSetting === 'realistic' || animationSetting === 'none' || animationSetting === 'slide' ? animationSetting : 'smooth');
     const calculated = allEntries.flatMap((entry) => paginateEntry(entry, Math.max(290, width - 76), Math.max(480, height - 245), notebook?.themeId ?? 'warm', fontScale));
     setPages(calculated);
     let rememberedIndex = Number(rememberedPage ?? 0);
@@ -63,21 +79,112 @@ export default function NotebookReaderScreen() {
     return () => clearTimeout(timer);
   }, [book, db, id, pageIndex, pages]);
 
-  const onPage = (direction: number) => {
-    const next = nextPageIndex(pageIndex, direction < 0 ? -1 : 1, pages.length);
-    if (next === pageIndex) { translate.value = withSpring(direction > 0 ? -14 : 14, {}, () => { translate.value = withSpring(0); }); return; }
-    setPageIndex(next); translate.value = withSpring(0, { damping: 20, stiffness: 190 }); shade.value = withTiming(0, { duration: 120 });
+  useEffect(() => () => { curlImage?.dispose(); }, [curlImage]);
+
+  const clearCurl = useCallback(() => {
+    curlSession.current += 1;
+    turning.current = false;
+    turnLock.value = 0;
+    validGesture.value = 0;
+    setCurlReady(false);
+    setCurlNeighborIndex(-1);
+    setCurlImage(null);
+    curlProgress.value = 0;
+    curlReadyValue.value = 0;
+    fallbackValue.value = 0;
+    translate.value = 0;
+    shade.value = 0;
+  }, [curlProgress, curlReadyValue, fallbackValue, shade, translate, turnLock, validGesture]);
+
+  const commitCurl = useCallback((direction: -1 | 1) => {
+    setPageIndex((current) => nextPageIndex(current, direction, pages.length));
+    clearCurl();
+  }, [clearCurl, pages.length]);
+
+  const prepareCurl = useCallback(async (direction: -1 | 1, touchY: number) => {
+    if (turning.current || reducedMotion || pageAnimation !== 'realistic') return false;
+    const neighbor = nextPageIndex(pageIndex, direction, pages.length);
+    if (neighbor === pageIndex) return false;
+    turning.current = true;
+    const session = ++curlSession.current;
+    curlDirectionValue.value = direction; curlTouchY.value = touchY;
+    setCurlNeighborIndex(neighbor); setCurlReady(false); curlReadyValue.value = 0;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    if (session !== curlSession.current || fallbackValue.value === 1 || !frontPageRef.current) return false;
+    try {
+      const image = await makeImageFromView(frontPageRef as unknown as React.RefObject<React.Component | null>);
+      if (!image) throw new Error('Бет суретін түсіру мүмкін болмады.');
+      if (session !== curlSession.current || fallbackValue.value === 1) { image.dispose(); return false; }
+      curlProgress.value = 0;
+      fallbackValue.value = 0;
+      setCurlImage(image); setCurlReady(true); curlReadyValue.value = 1;
+      return true;
+    } catch {
+      if (session === curlSession.current) { turning.current = false; setCurlReady(false); setCurlNeighborIndex(-1); curlReadyValue.value = 0; }
+      return false;
+    }
+  }, [curlDirectionValue, curlProgress, curlReadyValue, curlTouchY, fallbackValue, pageAnimation, pageIndex, pages.length, reducedMotion]);
+
+  const onPage = (rawDirection: number) => {
+    const direction = rawDirection < 0 ? -1 : 1;
+    const next = nextPageIndex(pageIndex, direction, pages.length);
+    if (next === pageIndex || turning.current) return;
+    if (reducedMotion || pageAnimation === 'none') { setPageIndex(next); return; }
+    if (pageAnimation === 'realistic') {
+      void prepareCurl(direction, height / 2).then((ready) => {
+        if (!ready) { setPageIndex(next); return; }
+        curlProgress.value = withTiming(1, { duration: 430 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+      });
+      return;
+    }
+    turning.current = true;
+    turnLock.value = 1;
+    translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : 230 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
   };
-  const pan = Gesture.Pan().activeOffsetX([-12, 12]).failOffsetY([-24, 24]).onUpdate((event) => { translate.value = event.translationX; shade.value = Math.min(1, Math.abs(event.translationX) / 260); }).onEnd((event) => {
-    if (shouldCommitPageTurn(event.translationX, event.velocityX, width)) {
+  const pan = Gesture.Pan().activeOffsetX([-12, 12]).failOffsetY([-24, 24])
+    .onStart((event) => {
+      if (turnLock.value === 1) { validGesture.value = 0; return; }
+      turnLock.value = 1; validGesture.value = 1;
       const direction = event.translationX < 0 ? 1 : -1;
-      if (reducedMotion || pageAnimation === 'none') { runOnJS(onPage)(direction); }
-      else { translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : 230 }, () => runOnJS(onPage)(direction)); }
-    } else { translate.value = withSpring(0, { damping: 19, stiffness: 180 }); shade.value = withTiming(0, { duration: 160 }); }
+      if (pageAnimation === 'realistic' && !reducedMotion) runOnJS(prepareCurl)(direction, event.y);
+    })
+    .onUpdate((event) => {
+      if (validGesture.value !== 1) return;
+      shade.value = Math.min(1, Math.abs(event.translationX) / 260);
+      if (pageAnimation === 'realistic' && !reducedMotion) {
+        curlProgress.value = Math.max(0, Math.min(1, Math.abs(event.translationX) / width));
+      } else translate.value = event.translationX;
+    })
+    .onEnd((event) => {
+      if (validGesture.value !== 1) return;
+      const direction = event.translationX < 0 ? 1 : -1;
+      const next = nextPageIndex(pageIndex, direction, pages.length);
+      if (next !== pageIndex && shouldCommitPageTurn(event.translationX, event.velocityX, width)) {
+        if (pageAnimation === 'realistic' && !reducedMotion) {
+          if (curlReadyValue.value === 1) {
+            curlProgress.value = withTiming(1, { duration: 360 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+          } else {
+            fallbackValue.value = 1;
+            const distance = Math.max(120, width - Math.abs(event.translationX));
+            translate.value = withTiming(direction > 0 ? -width : width, { duration: Math.max(100, Math.min(220, distance / Math.max(Math.abs(event.velocityX), 4) * 1000)) }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+          }
+        } else {
+          translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : pageAnimation === 'none' || reducedMotion ? 0 : 230 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+        }
+      } else if (pageAnimation === 'realistic' && !reducedMotion && curlReadyValue.value === 1) {
+        curlProgress.value = withTiming(0, { duration: 220 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        shade.value = withTiming(0, { duration: 160 });
+      } else {
+        translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        shade.value = withTiming(0, { duration: 160 });
+      }
+    });
+  const pageStyle = useAnimatedStyle(() => {
+    const staticSnapshot = pageAnimation === 'realistic' && curlReadyValue.value === 1;
+    const holdingForSnapshot = pageAnimation === 'realistic' && fallbackValue.value === 0 && curlReadyValue.value === 0;
+    const x = staticSnapshot || holdingForSnapshot ? 0 : translate.value;
+    return { transform: [{ translateX: x }, { perspective: 900 }, { rotateZ: `${staticSnapshot ? 0 : shade.value * (x < 0 ? -0.6 : 0.6)}deg` }, { scaleX: staticSnapshot ? 1 : 1 - shade.value * 0.035 }], shadowOpacity: staticSnapshot ? 0 : 0.12 + shade.value * 0.25, shadowRadius: staticSnapshot ? 0 : 3 + shade.value * 8, elevation: staticSnapshot ? 0 : 2 + Math.round(shade.value * 6) };
   });
-  const pageStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translate.value }, { perspective: 900 }, { rotateZ: `${shade.value * (translate.value < 0 ? -0.6 : 0.6)}deg` }, { scaleX: 1 - shade.value * 0.035 }], shadowOpacity: 0.12 + shade.value * 0.25, shadowRadius: 3 + shade.value * 8, elevation: 2 + Math.round(shade.value * 6) }));
-  const curlBackStyle = useAnimatedStyle(() => { const forward = translate.value < 0; const amount = shade.value; return { opacity: amount * 0.72, width: 10 + amount * 37, left: forward ? undefined : 0, right: forward ? 0 : undefined, borderTopLeftRadius: forward ? 18 : 3, borderBottomLeftRadius: forward ? 18 : 3, borderTopRightRadius: forward ? 3 : 18, borderBottomRightRadius: forward ? 3 : 18, transform: [{ skewY: `${(forward ? -1 : 1) * amount}deg` }] }; });
-  const curlHighlightStyle = useAnimatedStyle(() => ({ opacity: shade.value * 0.28, width: 2 + shade.value * 5, right: translate.value < 0 ? 8 : undefined, left: translate.value < 0 ? undefined : 8 }));
 
   const chooseTheme = async (themeId: ThemeId) => {
     if (!book) return;
@@ -97,16 +204,12 @@ export default function NotebookReaderScreen() {
     <View style={[styles.bookHeader, { backgroundColor: theme.cover }]}><View style={styles.headerSpine} /><Text style={styles.headerOrnament}>{theme.ornament}</Text><View style={{ flex: 1 }}><Text style={styles.bookTitle}>{book.title}</Text><Text style={styles.bookSub}>{theme.name} • жеке дәптер</Text></View>{activePage ? <TouchableOpacity style={styles.newPage} onPress={() => router.push({ pathname: '/(tabs)/journal', params: { notebookId: id, date: activePage.entry.date } })} accessibilityRole="button" accessibilityLabel="Жазбаны өңдеу"><Edit3 size={16} color={theme.cover} /></TouchableOpacity> : null}<TouchableOpacity style={styles.newPage} onPress={createPage} accessibilityRole="button" accessibilityLabel="Жаңа бет қосу"><Plus size={18} color={theme.cover} /></TouchableOpacity></View>
     <View style={styles.readerMeta}><Text style={styles.metaText}>{activePage ? new Intl.DateTimeFormat('kk-KZ', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${activePage.entry.date}T12:00:00`)) : 'Алғашқы бетті ашыңыз'}</Text><TouchableOpacity style={styles.toc} onPress={() => router.push('/search')}><Search size={15} color={colors.muted} /><Text style={styles.tocText}>Іздеу</Text></TouchableOpacity></View>
     {activePage ? <>
-      <View style={styles.pageArea}><View style={[styles.shadowPage, { backgroundColor: theme.line }]} /><GestureDetector gesture={pan}><Animated.View style={[styles.page, { backgroundColor: theme.page, borderColor: theme.line }, pageStyle]}>
-        <Animated.View pointerEvents="none" style={[readerStyles.curlBack, { backgroundColor: theme.line }, curlBackStyle]} /><Animated.View pointerEvents="none" style={[readerStyles.curlHighlight, { backgroundColor: theme.page }, curlHighlightStyle]} />
-        <View style={[styles.marginLine, { backgroundColor: theme.accent }]} /><View style={styles.pageTop}><Text style={[styles.pageBrand, { color: theme.muted }]}>L U M I</Text><Text style={[styles.pageCounter, { color: theme.muted }]}>{pageIndex + 1}</Text></View>
-        {activePage.segment === 0 && activePage.entry.title ? <Text style={[styles.entryTitle, { color: theme.ink, fontFamily: theme.serif }]}>{activePage.entry.title}</Text> : null}
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 12 }}>
-          {activePage.blocks.map((block) => block.type === 'image' && block.uri ? <Image key={block.id} source={{ uri: mediaUri(block.uri) }} style={styles.readerImage} resizeMode="contain" /> : <FormattedText key={block.id} content={block.type === 'list' ? `• ${block.text ?? ''}` : block.type === 'checklist' ? `${block.checked ? '☑' : '☐'} ${block.text ?? ''}` : block.text ?? ''} style={[styles.readerText, { color: theme.ink, fontFamily: theme.serif }, block.type === 'heading' ? styles.readerHeading : null, block.type === 'quote' ? [styles.readerQuote, { borderColor: theme.accent }] : null, block.type === 'code' ? styles.readerCode : null, block.type === 'list' ? styles.readerList : null, block.type === 'checklist' && block.checked ? { textDecorationLine: 'line-through', opacity: 0.6 } : null]} />)}
-        </ScrollView>
-        {activePage.segmentCount > 1 ? <Text style={[styles.segmentHint, { color: theme.muted }]}>{activePage.segment + 1} / {activePage.segmentCount} • жалғасы келесі бетте</Text> : null}
-        <View style={[styles.pageFoot, { borderColor: theme.line }]}><Text style={[styles.footText, { color: theme.muted }]}>{activePage.entry.mood ?? '✧'}  •  {activePage.entry.tags.join('  ·  ')}</Text><Text style={[styles.footText, { color: theme.muted }]}>{pageIndex + 1}</Text></View>
-      </Animated.View></GestureDetector></View>
+      <View style={styles.pageArea} onLayout={({ nativeEvent }) => { const nextSize = { width: nativeEvent.layout.width, height: nativeEvent.layout.height }; setCurlSize((current) => current.width === nextSize.width && current.height === nextSize.height ? current : nextSize); }}>
+        {pages[curlNeighborIndex] ? <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.underPage}><PageSurface ref={neighborPageRef} page={pages[curlNeighborIndex]!} pageNumber={curlNeighborIndex + 1} themeId={book.themeId} /></View> : null}
+        <View style={[styles.shadowPage, { backgroundColor: theme.line }]} />
+        <GestureDetector gesture={pan}><Animated.View style={[styles.pageFrame, pageStyle, curlReady ? { opacity: 0 } : null]}><PageSurface ref={frontPageRef} page={activePage} pageNumber={pageIndex + 1} themeId={book.themeId} /></Animated.View></GestureDetector>
+        {curlReady && curlImage && curlSize.width > 0 && curlSize.height > 0 ? <RealisticPageCurl image={curlImage} width={curlSize.width} height={curlSize.height} progress={curlProgress} direction={curlDirectionValue} touchY={curlTouchY} paperColor={theme.page} /> : null}
+      </View>
       <View style={styles.pageControls}><TouchableOpacity onPress={() => onPage(-1)} disabled={pageIndex === 0} style={styles.arrow}><ChevronLeft size={21} color={pageIndex === 0 ? '#D4C9BC' : colors.ink} /></TouchableOpacity><View style={styles.pageProgress}><View style={styles.progressTrack}><View style={[styles.progressFill, { backgroundColor: theme.accent, width: `${((pageIndex + 1) / pages.length) * 100}%` }]} /></View><Text style={styles.pageProgressText}>{pageIndex + 1} / {pages.length} бет</Text></View><TouchableOpacity onPress={() => onPage(1)} disabled={pageIndex === pages.length - 1} style={styles.arrow}><ChevronRight size={21} color={pageIndex === pages.length - 1 ? '#D4C9BC' : colors.ink} /></TouchableOpacity></View>
     </> : <View style={styles.empty}><BookOpen size={37} color={theme.accent} /><Text style={[styles.emptyTitle, { color: theme.ink }]}>Бұл дәптер әлі бос</Text><Text style={[styles.emptyText, { color: theme.muted }]}>Өз ойыңызбен алғашқы бетті толтырыңыз.</Text><TouchableOpacity onPress={createPage} style={[styles.startButton, { backgroundColor: theme.cover }]}><Plus size={17} color="#FFF9F1" /><Text style={styles.startText}>Бірінші бет</Text></TouchableOpacity></View>}
     <Text style={styles.gestureHint}>Бетті келесі бетке сырғытыңыз</Text>
@@ -217,5 +320,5 @@ function FormattedText({ content, style }: { content: string; style: StyleProp<T
 
 const readerStyles = StyleSheet.create({ curlBack: { position: 'absolute', top: 0, bottom: 0, zIndex: 4, elevation: 4 }, curlHighlight: { position: 'absolute', top: 4, bottom: 4, zIndex: 5, elevation: 5 }, generalReader: { paddingHorizontal: 16, paddingBottom: 8 }, generalPageScroll: { flex: 1, marginBottom: 7 }, generalPage: { minHeight: 400, borderWidth: 1, borderRadius: 17, padding: 18 }, generalTitle: { fontSize: 22, fontWeight: '700', marginVertical: 8 }, generalActions: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, paddingVertical: 6 }, readEdit: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: colors.ink, borderRadius: 12, paddingHorizontal: 15, paddingVertical: 11 }, readEditText: { color: '#FFF9F1', fontSize: 12, fontWeight: '700' }, readAdd: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F1E9DE', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11 }, readAddText: { color: colors.accent, fontSize: 12, fontWeight: '700' }, renameInput: { backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line, borderRadius: 11, padding: 12, color: colors.ink }, renameActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 20, paddingTop: 7 }, renameSave: { color: colors.accent, fontWeight: '700' }, moveRow: { minHeight: 54, justifyContent: 'center', paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth }, archiveTitle: { color: colors.ink, fontFamily: 'serif', fontSize: 17, fontWeight: '700', marginTop: 20, marginBottom: 8 }, vocabularySectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, pageAdd: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingTop: 10 }, notebookPageCard: { marginBottom: 9 }, pageActions: { flexDirection: 'row', gap: 20, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.line, marginTop: 6 }, translationList: { gap: 5 }, translationRow: { flexDirection: 'row', alignItems: 'center', gap: 9 }, languageTag: { width: 32, color: colors.muted, fontSize: 9, fontWeight: '700' }, translationValue: { color: colors.ink, fontSize: 15, flex: 1 }, wordExample: { color: colors.muted, fontSize: 12, fontStyle: 'italic', marginTop: 8 }, wordStatus: { color: colors.muted, fontSize: 10, marginTop: 7 }, wordEdit: { alignSelf: 'flex-start', paddingTop: 9 }, taskReadRow: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.paper, borderRadius: 12, padding: 12 }, taskReadText: { flex: 1, color: colors.ink, fontSize: 14 }, taskReadTime: { color: colors.muted, fontSize: 11 } });
 
-const styles = StyleSheet.create({ content: { paddingHorizontal: 16, paddingBottom: 8 }, tool: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F1E9DE' }, bookHeader: { height: 80, borderRadius: 16, paddingHorizontal: 17, flexDirection: 'row', alignItems: 'center', gap: 12, overflow: 'hidden' }, headerSpine: { position: 'absolute', left: 12, top: 0, bottom: 0, width: 1, backgroundColor: '#FFFFFF44' }, headerOrnament: { color: '#EED7A5', fontSize: 25 }, bookTitle: { color: '#FFF9F1', fontFamily: 'serif', fontSize: 19, fontWeight: '700' }, bookSub: { color: '#FFFFFFB3', fontSize: 10, marginTop: 4, letterSpacing: 0.5 }, newPage: { width: 37, height: 37, backgroundColor: '#F6EBDD', borderRadius: 13, alignItems: 'center', justifyContent: 'center' }, readerMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11 }, metaText: { color: colors.muted, fontSize: 11, textTransform: 'capitalize' }, toc: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: 5 }, tocText: { color: colors.muted, fontSize: 11 }, pageArea: { flex: 1, minHeight: 290, marginHorizontal: 4, marginBottom: 8 }, shadowPage: { position: 'absolute', left: 8, right: -3, top: 5, bottom: -2, backgroundColor: '#D4C6B5', borderRadius: 17, transform: [{ rotate: '1deg' }] }, page: { flex: 1, borderWidth: 1, borderRadius: 17, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 11, overflow: 'hidden', shadowColor: '#42362A', shadowOffset: { width: 2, height: 4 }, shadowRadius: 9 }, marginLine: { position: 'absolute', top: 0, bottom: 0, left: 41, width: 1, opacity: 0.3 }, pageTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }, pageBrand: { fontSize: 8, letterSpacing: 3, fontWeight: '700' }, pageCounter: { fontSize: 10 }, entryTitle: { fontSize: 21, fontWeight: '700', marginBottom: 11, paddingLeft: 20 }, readerText: { fontSize: 16, lineHeight: 24, marginBottom: 10, paddingLeft: 20 }, readerHeading: { fontSize: 19, fontWeight: '700', marginTop: 4, marginBottom: 8 }, readerQuote: { fontStyle: 'italic', borderLeftWidth: 2, paddingLeft: 10, marginLeft: 18 }, readerCode: { fontFamily: 'monospace', fontSize: 13, backgroundColor: '#0000000D', padding: 7, borderRadius: 5 }, readerList: { paddingLeft: 29 }, readerImage: { width: '100%', height: 195, marginVertical: 8, borderRadius: 11 }, segmentHint: { fontSize: 9, textAlign: 'right', marginBottom: 5 }, pageFoot: { borderTopWidth: 1, paddingTop: 8, flexDirection: 'row', justifyContent: 'space-between' }, footText: { fontSize: 9 }, pageControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 51 }, arrow: { width: 39, height: 39, borderRadius: 14, backgroundColor: '#EFE7DB', alignItems: 'center', justifyContent: 'center' }, pageProgress: { flex: 1, alignItems: 'center', paddingHorizontal: 23 }, progressTrack: { width: '100%', height: 4, backgroundColor: '#E4D9CC', borderRadius: 4, overflow: 'hidden' }, progressFill: { height: '100%', borderRadius: 4 }, pageProgressText: { color: colors.muted, fontSize: 10, marginTop: 5 }, empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 }, emptyTitle: { fontFamily: 'serif', fontSize: 20, fontWeight: '700', marginTop: 14 }, emptyText: { color: colors.muted, fontSize: 13, marginTop: 6, textAlign: 'center' }, startButton: { paddingVertical: 12, paddingHorizontal: 18, borderRadius: 13, flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 18 }, startText: { color: '#FFF9F1', fontWeight: '700', fontSize: 12 }, gestureHint: { color: '#A79B8E', fontSize: 10, textAlign: 'center', paddingBottom: 3 }, themeTitle: { color: colors.ink, fontFamily: 'serif', fontSize: 18, fontWeight: '700' }, themeRow: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 10, borderRadius: 12 }, themeDot: { width: 30, height: 37, borderRadius: 7 }, themeRowTitle: { color: colors.ink, fontWeight: '700', fontSize: 13 }, themeRowSub: { color: colors.muted, fontSize: 10, marginTop: 2 }
+const styles = StyleSheet.create({ content: { paddingHorizontal: 16, paddingBottom: 8 }, tool: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F1E9DE' }, bookHeader: { height: 80, borderRadius: 16, paddingHorizontal: 17, flexDirection: 'row', alignItems: 'center', gap: 12, overflow: 'hidden' }, headerSpine: { position: 'absolute', left: 12, top: 0, bottom: 0, width: 1, backgroundColor: '#FFFFFF44' }, headerOrnament: { color: '#EED7A5', fontSize: 25 }, bookTitle: { color: '#FFF9F1', fontFamily: 'serif', fontSize: 19, fontWeight: '700' }, bookSub: { color: '#FFFFFFB3', fontSize: 10, marginTop: 4, letterSpacing: 0.5 }, newPage: { width: 37, height: 37, backgroundColor: '#F6EBDD', borderRadius: 13, alignItems: 'center', justifyContent: 'center' }, readerMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 11 }, metaText: { color: colors.muted, fontSize: 11, textTransform: 'capitalize' }, toc: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: 5 }, tocText: { color: colors.muted, fontSize: 11 }, pageArea: { flex: 1, minHeight: 290, marginHorizontal: 4, marginBottom: 8, overflow: 'hidden' }, underPage: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 0 }, pageFrame: { flex: 1, zIndex: 2 }, shadowPage: { position: 'absolute', left: 8, right: -3, top: 5, bottom: -2, backgroundColor: '#D4C6B5', borderRadius: 17, transform: [{ rotate: '1deg' }] }, page: { flex: 1, borderWidth: 1, borderRadius: 17, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 11, overflow: 'hidden', shadowColor: '#42362A', shadowOffset: { width: 2, height: 4 }, shadowRadius: 9 }, marginLine: { position: 'absolute', top: 0, bottom: 0, left: 41, width: 1, opacity: 0.3 }, pageTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }, pageBrand: { fontSize: 8, letterSpacing: 3, fontWeight: '700' }, pageCounter: { fontSize: 10 }, entryTitle: { fontSize: 21, fontWeight: '700', marginBottom: 11, paddingLeft: 20 }, readerText: { fontSize: 16, lineHeight: 24, marginBottom: 10, paddingLeft: 20 }, readerHeading: { fontSize: 19, fontWeight: '700', marginTop: 4, marginBottom: 8 }, readerQuote: { fontStyle: 'italic', borderLeftWidth: 2, paddingLeft: 10, marginLeft: 18 }, readerCode: { fontFamily: 'monospace', fontSize: 13, backgroundColor: '#0000000D', padding: 7, borderRadius: 5 }, readerList: { paddingLeft: 29 }, readerImage: { width: '100%', height: 195, marginVertical: 8, borderRadius: 11 }, segmentHint: { fontSize: 9, textAlign: 'right', marginBottom: 5 }, pageFoot: { borderTopWidth: 1, paddingTop: 8, flexDirection: 'row', justifyContent: 'space-between' }, footText: { fontSize: 9 }, pageControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 51 }, arrow: { width: 39, height: 39, borderRadius: 14, backgroundColor: '#EFE7DB', alignItems: 'center', justifyContent: 'center' }, pageProgress: { flex: 1, alignItems: 'center', paddingHorizontal: 23 }, progressTrack: { width: '100%', height: 4, backgroundColor: '#E4D9CC', borderRadius: 4, overflow: 'hidden' }, progressFill: { height: '100%', borderRadius: 4 }, pageProgressText: { color: colors.muted, fontSize: 10, marginTop: 5 }, empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 }, emptyTitle: { fontFamily: 'serif', fontSize: 20, fontWeight: '700', marginTop: 14 }, emptyText: { color: colors.muted, fontSize: 13, marginTop: 6, textAlign: 'center' }, startButton: { paddingVertical: 12, paddingHorizontal: 18, borderRadius: 13, flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 18 }, startText: { color: '#FFF9F1', fontWeight: '700', fontSize: 12 }, gestureHint: { color: '#A79B8E', fontSize: 10, textAlign: 'center', paddingBottom: 3 }, themeTitle: { color: colors.ink, fontFamily: 'serif', fontSize: 18, fontWeight: '700' }, themeRow: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 10, borderRadius: 12 }, themeDot: { width: 30, height: 37, borderRadius: 7 }, themeRowTitle: { color: colors.ink, fontWeight: '700', fontSize: 13 }, themeRowSub: { color: colors.muted, fontSize: 10, marginTop: 2 }
 });

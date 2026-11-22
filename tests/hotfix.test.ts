@@ -6,7 +6,7 @@ import { isExternalActivityActive, withExternalActivity } from '../src/services/
 import { DEFAULT_AUTO_LOCK_MINUTES, shouldAutoLockAfterBackground } from '../src/services/lockPolicy.ts';
 import { normalizeVocabularyTranslations } from '../src/utils/vocabulary.ts';
 import { paletteFor, resolveAppearance } from '../src/services/appearance.ts';
-import { nextPageIndex, shouldCommitPageTurn } from '../src/utils/pageTurn.ts';
+import { buildPageCurlMesh, nextPageIndex, shouldCommitPageTurn } from '../src/utils/pageTurn.ts';
 
 const file = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -26,6 +26,25 @@ test('page gestures commit at progress or velocity thresholds and clamp the page
   assert.equal(nextPageIndex(0, -1, 4), 0);
   assert.equal(nextPageIndex(3, 1, 4), 3);
   assert.equal(nextPageIndex(1, 1, 4), 2);
+});
+
+test('Skia page-curl mesh keeps the page flat at rest and builds shaded front and backside meshes while turning both ways', () => {
+  const rest = buildPageCurlMesh(240, 360, 0, 1, 180, '#FBF4E8', 12, 8);
+  assert.equal(rest.points.length, 13 * 9);
+  assert.deepEqual(rest.points[0], { x: 0, y: 0 });
+  assert.deepEqual(rest.points.at(-1), { x: 240, y: 360 });
+  assert.equal(rest.backIndices.length, 0);
+  assert.ok(rest.frontIndices.length > 0);
+
+  for (const direction of [-1, 1] as const) {
+    const mesh = buildPageCurlMesh(240, 360, 0.72, direction, 90, '#FBF4E8', 12, 8);
+    assert.ok(mesh.backIndices.length > 0);
+    assert.ok(mesh.frontIndices.length > 0);
+    assert.ok(mesh.points.some((point, index) => Math.abs(point.x - mesh.textures[index]!.x) > 1));
+    assert.ok([...mesh.frontIndices, ...mesh.backIndices].every((index) => index >= 0 && index < mesh.points.length));
+    assert.equal(mesh.frontColors.length, mesh.points.length);
+    assert.equal(mesh.backColors.length, mesh.points.length);
+  }
 });
 
 test('lock policy defaults to one minute and only locks after an eligible background interval', () => {
