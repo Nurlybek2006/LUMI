@@ -84,6 +84,22 @@ test('reader cancels native animations when a gesture is cancelled, mode changes
   assert.match(reader, /fallback/u);
 });
 
+test('page-turn UI worklets only call workletized calculations and schedule ordinary JS on the RN runtime', () => {
+  const reader = file('app/notebook/[id].tsx');
+  const pageTurn = file('src/utils/pageTurn.ts');
+  assert.match(pageTurn, /function shouldCommitPageTurn\([^)]*\): boolean \{\s*'worklet';/u);
+  assert.match(pageTurn, /function nextPageIndex\([^)]*\): number \{\s*'worklet';/u);
+  assert.match(pageTurn, /function clampPageIndex\([^)]*\): number \{\s*'worklet';/u);
+  assert.match(reader, /import \{ scheduleOnRN \} from 'react-native-worklets'/u);
+  assert.doesNotMatch(reader, /runOnJS/u);
+  const panCallbacks = reader.slice(reader.indexOf('const pan = Gesture.Pan()'), reader.indexOf('const pageStyle = useAnimatedStyle'));
+  for (const callback of ['onStart', 'onUpdate', 'onEnd', 'onFinalize']) assert.ok(panCallbacks.includes(`.${callback}(`), `gesture is missing ${callback}`);
+  assert.match(panCallbacks, /scheduleOnRN\(prepareCurl/u);
+  assert.match(panCallbacks, /scheduleOnRN\(commitCurl/u);
+  assert.match(panCallbacks, /scheduleOnRN\(clearCurl/u);
+  assert.match(reader, /curlRequest\.value === 0/u);
+});
+
 test('calendar route links retain the requested date and open actual planner and journal destinations', () => {
   const calendar = file('app/(tabs)/calendar.tsx');
   const journal = file('app/(tabs)/journal.tsx');

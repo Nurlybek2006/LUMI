@@ -1,12 +1,15 @@
 export function shouldCommitPageTurn(translationX: number, velocityX: number, width: number): boolean {
+  'worklet';
   return Math.abs(translationX) >= Math.max(64, width * 0.18) || Math.abs(velocityX) > 850;
 }
 
 export function nextPageIndex(index: number, direction: -1 | 1, pageCount: number): number {
+  'worklet';
   return clampPageIndex(index + direction, pageCount);
 }
 
 export function clampPageIndex(index: number, pageCount: number): number {
+  'worklet';
   if (!Number.isFinite(index) || !Number.isFinite(pageCount) || pageCount <= 0) return 0;
   return Math.max(0, Math.min(Math.max(0, Math.floor(pageCount) - 1), Math.floor(index)));
 }

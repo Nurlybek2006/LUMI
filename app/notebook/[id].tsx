@@ -4,7 +4,8 @@ import { AccessibilityInfo, Image, ScrollView, StyleSheet, Text, TextInput, Touc
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { cancelAnimation, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { makeImageFromView } from '@shopify/react-native-skia';
 import type { SkImage } from '@shopify/react-native-skia';
 import { BookOpen, ChevronLeft, ChevronRight, Edit3, Languages, Palette, Plus, Search } from 'lucide-react-native';
@@ -46,7 +47,7 @@ export default function NotebookReaderScreen() {
   const readerMounted = useRef(true);
   const turning = useRef(false);
   const translate = useSharedValue(0); const shade = useSharedValue(0);
-  const curlProgress = useSharedValue(0); const curlDirectionValue = useSharedValue< -1 | 1 >(1); const curlTouchY = useSharedValue(0); const curlReadyValue = useSharedValue(0);
+  const curlProgress = useSharedValue(0); const curlDirectionValue = useSharedValue< -1 | 1 >(1); const curlTouchY = useSharedValue(0); const curlReadyValue = useSharedValue(0); const curlRequest = useSharedValue< -1 | 0 | 1 >(0);
   const fallbackValue = useSharedValue(0);
   const turnLock = useSharedValue(0); const validGesture = useSharedValue(0);
   const safePageIndex = clampPageIndex(pageIndex, pages.length);
@@ -98,10 +99,11 @@ export default function NotebookReaderScreen() {
     if (readerMounted.current) { setCurlReady(false); setCurlNeighborIndex(-1); setCurlImage(null); }
     curlProgress.value = 0;
     curlReadyValue.value = 0;
+    curlRequest.value = 0;
     fallbackValue.value = 0;
     translate.value = 0;
     shade.value = 0;
-  }, [curlProgress, curlReadyValue, fallbackValue, shade, translate, turnLock, validGesture]);
+  }, [curlProgress, curlReadyValue, curlRequest, fallbackValue, shade, translate, turnLock, validGesture]);
 
   useEffect(() => {
     if (previousAnimation.current !== pageAnimation) {
@@ -151,25 +153,28 @@ export default function NotebookReaderScreen() {
     if (pageAnimation === 'realistic') {
       void prepareCurl(direction, height / 2).then((ready) => {
         if (!ready) { setPageIndex(next); return; }
-        curlProgress.value = withTiming(1, { duration: 430 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+        curlProgress.value = withTiming(1, { duration: 430 }, (finished) => { if (finished) scheduleOnRN(commitCurl, direction); });
       });
       return;
     }
     turning.current = true;
     turnLock.value = 1;
-    translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : 230 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+    translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : 230 }, (finished) => { if (finished) scheduleOnRN(commitCurl, direction); });
   };
   const pan = Gesture.Pan().activeOffsetX([-12, 12]).failOffsetY([-24, 24])
-    .onStart((event) => {
+    .onStart(() => {
       if (turnLock.value === 1) { validGesture.value = 0; return; }
       turnLock.value = 1; validGesture.value = 1;
-      const direction = event.translationX < 0 ? 1 : -1;
-      if (pageAnimation === 'realistic' && !reducedMotion) runOnJS(prepareCurl)(direction, event.y);
     })
     .onUpdate((event) => {
       if (validGesture.value !== 1) return;
       shade.value = Math.min(1, Math.abs(event.translationX) / 260);
       if (pageAnimation === 'realistic' && !reducedMotion) {
+        const direction = event.translationX < 0 ? 1 : -1;
+        if (curlReadyValue.value === 0 && curlRequest.value === 0) {
+          curlRequest.value = direction;
+          scheduleOnRN(prepareCurl, direction, event.y);
+        }
         curlProgress.value = Math.max(0, Math.min(1, Math.abs(event.translationX) / width));
       } else translate.value = event.translationX;
     })
@@ -180,20 +185,20 @@ export default function NotebookReaderScreen() {
       if (next !== safePageIndex && shouldCommitPageTurn(event.translationX, event.velocityX, width)) {
         if (pageAnimation === 'realistic' && !reducedMotion) {
           if (curlReadyValue.value === 1) {
-            curlProgress.value = withTiming(1, { duration: 360 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+            curlProgress.value = withTiming(1, { duration: 360 }, (finished) => { if (finished) scheduleOnRN(commitCurl, direction); });
           } else {
             fallbackValue.value = 1;
             const distance = Math.max(120, width - Math.abs(event.translationX));
-            translate.value = withTiming(direction > 0 ? -width : width, { duration: Math.max(100, Math.min(220, distance / Math.max(Math.abs(event.velocityX), 4) * 1000)) }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+            translate.value = withTiming(direction > 0 ? -width : width, { duration: Math.max(100, Math.min(220, distance / Math.max(Math.abs(event.velocityX), 4) * 1000)) }, (finished) => { if (finished) scheduleOnRN(commitCurl, direction); });
           }
         } else {
-          translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : pageAnimation === 'none' || reducedMotion ? 0 : 230 }, (finished) => { if (finished) runOnJS(commitCurl)(direction); });
+          translate.value = withTiming(direction > 0 ? -width : width, { duration: pageAnimation === 'slide' ? 150 : pageAnimation === 'none' || reducedMotion ? 0 : 230 }, (finished) => { if (finished) scheduleOnRN(commitCurl, direction); });
         }
       } else if (pageAnimation === 'realistic' && !reducedMotion && curlReadyValue.value === 1) {
-        curlProgress.value = withTiming(0, { duration: 220 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        curlProgress.value = withTiming(0, { duration: 220 }, (finished) => { if (finished) scheduleOnRN(clearCurl); });
         shade.value = withTiming(0, { duration: 160 });
       } else {
-        translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) scheduleOnRN(clearCurl); });
         shade.value = withTiming(0, { duration: 160 });
       }
     })
@@ -201,9 +206,9 @@ export default function NotebookReaderScreen() {
       if (success || validGesture.value !== 1) return;
       cancelAnimation(translate); cancelAnimation(shade); cancelAnimation(curlProgress);
       if (pageAnimation === 'realistic' && !reducedMotion && curlReadyValue.value === 1) {
-        curlProgress.value = withTiming(0, { duration: 160 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        curlProgress.value = withTiming(0, { duration: 160 }, (finished) => { if (finished) scheduleOnRN(clearCurl); });
       } else {
-        translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) runOnJS(clearCurl)(); });
+        translate.value = withSpring(0, { damping: 19, stiffness: 180 }, (finished) => { if (finished) scheduleOnRN(clearCurl); });
         shade.value = withTiming(0, { duration: 120 });
       }
     });
