@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp, Bold, CheckSquare, Code2, Heading1, Heading2, Headi
 import { AppScreen, colors } from '@/components/ui';
 import { getNotebook, getNotebookPage, saveNotebookPage } from '@/database/repository';
 import { SaveQueue } from '@/services/autosave';
+import { shouldPersistPage } from '@/services/pageAutosave';
 import { withExternalActivity } from '@/services/externalActivity';
 import { mediaUri, pruneUnusedMedia, storeImage } from '@/services/media';
 import { getTheme } from '@/themes/registry';
@@ -34,29 +35,31 @@ export default function GeneralNoteEditor() {
   const latest = useRef<Payload | null>(null); const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputs = useRef<Record<string, TextInputInstance | null>>({}); const selections = useRef<Record<string, { start: number; end: number }>>({});
   const queue = useMemo(() => {
+    // Барлық autosave тек осы бір documentId-ге жазылады, сондықтан жаңа беттер көбеймейді.
     const activePageId = documentId;
-    const hasExistingPage = Boolean(pageId);
     return new SaveQueue<Payload>(async (payload) => {
-    const hasText = payload.title.trim() || payload.blocks.some((block) => block.type === 'image' || block.type === 'vocabulary_columns' || Boolean(block.text?.trim()));
-    if (!hasText && !hasExistingPage) { setSaveState('Жаңа бет'); return; }
+    // Бос жаңа бет жазылмайды; бет бір рет сақталса, кейінгі өзгерістер (мәтінді өшіру де) сол бетке жазылады.
+    const persisted = Boolean(await getNotebookPage(db, activePageId));
+    if (!shouldPersistPage(payload, persisted)) { setSaveState('Жаңа бет'); return; }
     await saveNotebookPage(db, payload, activePageId); setSaveState('Сақталды');
     try { await pruneUnusedMedia(db); } catch { /* Сақталған бетке тазалау қатесі әсер етпейді. */ }
     });
-  }, [db, documentId, pageId]);
+  }, [db, documentId]);
 
   const flush = useCallback(async () => { if (latest.current) await queue.enqueue(latest.current); await queue.flush(); }, [queue]);
   const report = useCallback((error: unknown) => { setSaveState(error instanceof Error ? `Сақтау қатесі: ${error.message}` : 'Сақтау қатесі'); }, []);
   useFocusEffect(useCallback(() => {
     let active = true;
     void (async () => {
-      const [notebook, page] = await Promise.all([getNotebook(db, id), pageId ? getNotebookPage(db, pageId) : Promise.resolve(null)]);
+      // documentId бойынша жүктеу: жаңа бет сақталып, экран қайта фокус алса, жазылған мәтін бос бетпен алмаспайды.
+      const [notebook, page] = await Promise.all([getNotebook(db, id), getNotebookPage(db, documentId)]);
       if (!active) return;
       setBook(notebook); setTitle(page?.title ?? '');
       const next = page?.blocks.length ? page.blocks : [blankBlock()]; setBlocks(next); blockRef.current = next;
       setLoaded(true);
     })();
     return () => { active = false; void flush().catch(report); };
-  }, [db, flush, id, pageId, report]));
+  }, [db, documentId, flush, id, report]));
 
   useEffect(() => { const listener = AppState.addEventListener('change', (state) => { if (state !== 'active') void flush().catch(report); }); return () => listener.remove(); }, [flush, report]);
   useEffect(() => {

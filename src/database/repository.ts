@@ -1,6 +1,7 @@
 import type * as SQLite from 'expo-sqlite';
 import { randomUUID } from 'expo-crypto';
 import { localDate, longestStreak, wordCount, writingStreak } from '@/utils/core';
+import { resolveNotebookPageId } from '@/services/pageAutosave';
 import type { Entry, EntryBlock, Notebook, NotebookPage, NotebookType, PlannerTask, VocabularyWord } from '@/types/models';
 
 const id = (): string => randomUUID();
@@ -60,7 +61,8 @@ export async function getNotebookPage(db: SQLite.SQLiteDatabase, pageId: string)
   return row ? pageModel(row) : null;
 }
 export async function saveNotebookPage(db: SQLite.SQLiteDatabase, input: Pick<NotebookPage, 'notebookId' | 'title' | 'content' | 'blocks'>, pageId?: string): Promise<string> {
-  const timestamp = now(); const current = pageId ? await getNotebookPage(db, pageId) : null; const actualId = current?.id ?? id();
+  // Берілген pageId жаңа бет үшін де сақталады: әйтпесе әр autosave жаңа жол қосады.
+  const timestamp = now(); const current = pageId ? await getNotebookPage(db, pageId) : null; const actualId = resolveNotebookPageId(current?.id, pageId, id);
   const order = current?.sortOrder ?? ((await db.getFirstAsync<{ max: number | null }>('SELECT MAX(sort_order) AS max FROM notebook_pages WHERE notebook_id=?', input.notebookId))?.max ?? -1) + 1;
   await db.withTransactionAsync(async () => {
     await db.runAsync(`INSERT INTO notebook_pages(id,notebook_id,title,content,blocks_json,sort_order,created_at,updated_at)
